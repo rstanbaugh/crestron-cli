@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -33,10 +35,8 @@ class CrestronApiError(Exception):
 
 class CrestronClient:
     def __init__(self, config: Config):
-        if requests is None:
-            raise CrestronApiError("missing dependency", details="install requests")
         self.config = config
-        self.session = requests.Session()
+        self.session = requests.Session() if requests is not None else None
         self.authkey: Optional[str] = None
         self.reauth_happened = False
 
@@ -112,8 +112,86 @@ class CrestronClient:
             "Crestron-RestAPI-AuthToken": self.config.auth_token,
         }
         if include_authkey and self.authkey:
-            headers["Crestron-RestAPI-AuthKey"] = self.authkey
+            headers["Crestron-RestAPI-Authkey"] = self.authkey
         return headers
+
+    def _request_via_curl(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Optional[Dict[str, Any]],
+        include_authkey: bool,
+    ) -> Any:
+        url = f"{self.config.base_url}{path}"
+        headers = self._headers(include_authkey=include_authkey)
+
+        cmd: List[str] = [
+            "curl",
+            "-sS",
+            "-X",
+            method.upper(),
+            url,
+            "--connect-timeout",
+            str(max(1, int(self.config.timeout_s))),
+            "--max-time",
+            str(max(1, int(self.config.timeout_s))),
+        ]
+
+        for key, value in headers.items():
+            cmd.extend(["-H", f"{key}: {value}"])
+
+        if json_body is not None:
+            cmd.extend(["-H", "Content-Type: application/json", "--data", json.dumps(json_body)])
+
+        cmd.extend(["-w", "\n__STATUS__:%{http_code}"])
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except Exception as exc:
+            raise CrestronApiError("request failed", details=f"curl execution failed: {exc}")
+
+        if result.returncode != 0:
+            details = result.stderr.strip() or result.stdout.strip() or f"curl exit {result.returncode}"
+            raise CrestronApiError("request failed", details=details)
+
+        marker = "\n__STATUS__:"
+        if marker not in result.stdout:
+            raise CrestronApiError("request failed", details="curl response parse error")
+
+        body_text, _, status_text = result.stdout.rpartition(marker)
+        try:
+            status_code = int(status_text.strip())
+        except Exception:
+            raise CrestronApiError("request failed", details="invalid HTTP status from curl")
+
+        parsed: Any = None
+        if body_text.strip():
+            try:
+                parsed = json.loads(body_text)
+            except Exception:
+                parsed = None
+
+        if status_code >= 400:
+            if isinstance(parsed, dict):
+                detail = self._pick(parsed, "message", "Message", "error", "Error", "details", "Details")
+                error_source = self._extract_error_source(parsed)
+            else:
+                detail = (body_text or "").strip()[:300] or None
+                error_source = None
+
+            mapped = ERROR_SOURCE_MAP.get(error_source)
+            message = mapped or f"HTTP {status_code}"
+            raise CrestronApiError(message, details=str(detail) if detail else None, error_source=error_source, status_code=status_code)
+
+        if isinstance(parsed, dict):
+            error_source = self._extract_error_source(parsed)
+            if error_source not in (None, 0):
+                mapped = ERROR_SOURCE_MAP.get(error_source, "API operation failed")
+                detail = self._pick(parsed, "message", "Message", "error", "Error", "details", "Details")
+                raise CrestronApiError(mapped, details=str(detail) if detail else None, error_source=error_source)
+
+        return parsed if parsed is not None else {}
 
     def _request(
         self,
@@ -124,6 +202,14 @@ class CrestronClient:
         include_authkey: bool,
         retry_on_auth: bool = True,
     ) -> Any:
+        if self.session is None:
+            return self._request_via_curl(
+                method,
+                path,
+                json_body=json_body,
+                include_authkey=include_authkey,
+            )
+
         url = f"{self.config.base_url}{path}"
         headers = self._headers(include_authkey=include_authkey)
         if json_body is not None:
@@ -140,7 +226,12 @@ class CrestronClient:
         except requests.Timeout:
             raise CrestronApiError("request timed out", details=f"after {self.config.timeout_s:.1f}s")
         except requests.RequestException as exc:
-            raise CrestronApiError("request failed", details=str(exc))
+            return self._request_via_curl(
+                method,
+                path,
+                json_body=json_body,
+                include_authkey=include_authkey,
+            )
 
         parsed: Any = None
         body_text = response.text.strip()
@@ -290,6 +381,8 @@ class CrestronClient:
         self.ensure_login()
         paths = ["/lights/SetState", "/lights/setstate"]
         payloads = [
+            {"lights": [{"id": int(light_id), "level": int(level_raw), "time": 0}]},
+            {"lights": [{"id": int(light_id), "level": int(level_raw)}]},
             {"id": int(light_id), "value": int(level_raw)},
             {"Id": int(light_id), "Value": int(level_raw)},
             {"id": int(light_id), "level": int(level_raw)},
