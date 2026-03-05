@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crestron-cli"
+version = "0.1.0"
+description = "Lightweight CLI for Crestron Home lighting and inventory queries"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "requests>=2.31.0",
+  "PyYAML>=6.0.1",
+]
+
+[project.scripts]
+crestron-cli = "crestron_cli.main:cli"
