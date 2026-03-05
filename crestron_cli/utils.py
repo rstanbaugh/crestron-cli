@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 from datetime import datetime, timezone
@@ -43,6 +45,40 @@ def default_output_format(json_flag: bool, yaml_flag: bool) -> str:
     if os.getenv("OPENCLAW_PY"):
         return "yaml"
     return "human"
+
+
+def render_table(headers: list[str], rows: list[list[Any]]) -> str:
+    string_rows: list[list[str]] = []
+    for row in rows:
+        string_rows.append(["" if value is None else str(value) for value in row])
+
+    widths: list[int] = []
+    for idx, header in enumerate(headers):
+        max_row_width = 0
+        for row in string_rows:
+            if idx < len(row):
+                max_row_width = max(max_row_width, len(row[idx]))
+        widths.append(max(len(header), max_row_width))
+
+    def _format_line(values: list[str]) -> str:
+        padded: list[str] = []
+        for idx, value in enumerate(values):
+            padded.append(value.ljust(widths[idx]))
+        return " | ".join(padded)
+
+    header_line = _format_line(headers)
+    separator = "-+-".join("-" * width for width in widths)
+    body = [_format_line(row) for row in string_rows]
+    return "\n".join([header_line, separator, *body])
+
+
+def render_csv(headers: list[str], rows: list[list[Any]]) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow(["" if value is None else value for value in row])
+    return output.getvalue().rstrip("\n")
 
 
 def emit_payload(payload: Dict[str, Any], fmt: str) -> None:
