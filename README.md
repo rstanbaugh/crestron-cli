@@ -7,6 +7,32 @@ Current MVP supports:
 - query lights/rooms/scenes
 - light actions (`on`, `off`, `set`, `toggle`)
 
+## AI/Agent Usage (Recommended)
+
+For OpenClaw or other automation agents, use structured output and parse only stable fields.
+
+- Always pass `--yaml` or `--json` (do not parse human text mode)
+- Treat exit code `0` as success and non-zero as failure
+- In structured modes, parse `success` first
+- On failures, parse `error` and optional `details`
+- Use `--refresh` on query commands when fresh inventory is required
+
+Suggested command sequence for agents:
+
+```bash
+crestron-cli initialize --yaml
+crestron-cli query rooms --yaml
+crestron-cli query lights --yaml
+crestron-cli "Kitchen Island" set 35 --yaml
+```
+
+Structured response shape (stable contract):
+
+- initialize: `success`, `message`, `data.rooms`, `data.lights`, `data.scenes`, `data.state_path`
+- query lights|rooms|scenes: `success`, `entity`, `count`, `refreshed`, `items[]`
+- actions (on/off/set/toggle): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.level_raw`, `data.level_percent`
+- errors: `success: false`, `error`, optional `details`
+
 ## Runtime model
 
 - Primary runtime: conda env `openclaw`
