@@ -211,6 +211,17 @@ def _parse_action_level(action: str, level_text: str | None) -> Tuple[int | None
     return level_value, None
 
 
+def _normalize_target_token(target: str) -> str:
+    token = target.strip()
+    lowered = token.lower()
+    for prefix in ("light=", "id=", "light:", "id:"):
+        if lowered.startswith(prefix):
+            value = token[len(prefix):].strip()
+            if value:
+                return value
+    return token
+
+
 def _action_command(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="crestron-cli <target>",
@@ -241,7 +252,8 @@ def _action_command(argv: List[str]) -> int:
         if not has_cached_inventory(state):
             state = _refresh_inventory(client, state)
 
-        light_id, light = resolve_light_target(state, args.target)
+        target_token = _normalize_target_token(args.target)
+        light_id, light = resolve_light_target(state, target_token)
         current_level = light.get("current_level")
         if current_level is None:
             current_level = 0
