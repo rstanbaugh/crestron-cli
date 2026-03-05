@@ -18,7 +18,7 @@ from .state import (
     save_state,
     update_light_level,
 )
-from .utils import default_output_format, emit_payload, percent_to_raw
+from .utils import default_output_format, emit_payload, percent_to_raw, render_csv, render_table
 
 
 def _emit_error(message: str, *, fmt: str = "human", details: str | None = None) -> int:
@@ -51,6 +51,184 @@ def _refresh_inventory(client: CrestronClient, current_state: Dict[str, Any]) ->
     )
     save_state(refreshed_state)
     return refreshed_state
+
+
+def _query_output_format(*, json_flag: bool, yaml_flag: bool, raw_flag: bool) -> str:
+    if json_flag:
+        return "json"
+    if yaml_flag:
+        return "yaml"
+    if raw_flag:
+        return "raw"
+    return "human"
+
+
+def _parse_room_filter_token(token: str) -> Tuple[int | None, str | None]:
+    lowered_token = token.lower().strip()
+    room_value: str | None = None
+    for prefix in ("room=", "room:"):
+        if lowered_token.startswith(prefix):
+            room_value = token[len(prefix):].strip()
+            break
+
+    if room_value is None:
+        return None, "query filter must use room=<id>"
+    if not room_value or not room_value.isdigit():
+        return None, "room filter requires a numeric id"
+    return int(room_value), None
+
+
+def _parse_query_selector(selector: str | None, query_filter: str | None) -> Tuple[str, int | None, str | None]:
+    tokens: List[str] = []
+    for value in (selector, query_filter):
+        token = (value or "").strip()
+        if token:
+            tokens.append(token)
+
+    entity: str | None = None
+    room_id: int | None = None
+
+    for token in tokens:
+        normalized = token.lower()
+        if normalized in {"lights", "rooms", "scenes"}:
+            if entity is not None:
+                return "", None, "multiple entities provided; use only one of lights, rooms, or scenes"
+            entity = normalized
+            continue
+
+        parsed_room_id, room_error = _parse_room_filter_token(token)
+        if room_error:
+            return "", None, room_error
+        if room_id is not None:
+            return "", None, "multiple room filters provided; use only one room=<id>"
+        room_id = parsed_room_id
+
+    if entity is None:
+        entity = "lights"
+
+    if room_id is not None and entity not in {"lights", "scenes"}:
+        return "", None, "room filter is only supported for lights and scenes queries"
+
+    return entity, room_id, None
+
+
+def _format_percent(value: Any) -> str:
+    try:
+        return f"{float(value):.1f}"
+    except Exception:
+        return ""
+
+
+def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | None) -> None:
+    if entity == "lights":
+        if room_id is None:
+            headers = ["Room", "Room ID", "Name", "Light ID", "Current Level", "Percent", "Subtype"]
+            rows = [
+                [
+                    row.get("room_name"),
+                    row.get("room_id"),
+                    row.get("name"),
+                    row.get("id"),
+                    row.get("current_level"),
+                    _format_percent(row.get("percent")),
+                    row.get("subtype"),
+                ]
+                for row in items
+            ]
+            title = f"Lights ({len(items)})"
+        else:
+            headers = ["Room", "Room ID", "Name", "Light ID", "Current Level", "Percent", "Subtype"]
+            rows = [
+                [
+                    row.get("room_name"),
+                    row.get("room_id"),
+                    row.get("name"),
+                    row.get("id"),
+                    row.get("current_level"),
+                    _format_percent(row.get("percent")),
+                    row.get("subtype"),
+                ]
+                for row in items
+            ]
+            title = f"Lights in room {room_id} ({len(items)})"
+        print(f"{title}\n{render_table(headers, rows)}")
+        return
+
+    if entity == "rooms":
+        headers = ["Name", "Room ID"]
+        rows = [[row.get("name"), row.get("id")] for row in items]
+        print(f"Rooms ({len(items)})\n{render_table(headers, rows)}")
+        return
+
+    headers = ["Room", "Room ID", "Name", "Scene ID"]
+    rows = [[row.get("room_name"), row.get("room_id"), row.get("name"), row.get("id")] for row in items]
+    print(f"Scenes ({len(items)})\n{render_table(headers, rows)}")
+
+
+def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | None) -> None:
+    if entity == "lights":
+        if room_id is None:
+            headers = ["Room", "Room ID", "Name", "Light ID", "Current Level", "Percent", "Subtype"]
+            rows = [
+                [
+                    row.get("room_name"),
+                    row.get("room_id"),
+                    row.get("name"),
+                    row.get("id"),
+                    row.get("current_level"),
+                    _format_percent(row.get("percent")),
+                    row.get("subtype"),
+                ]
+                for row in items
+            ]
+        else:
+            headers = ["Room", "Room ID", "Name", "Light ID", "Current Level", "Percent", "Subtype"]
+            rows = [
+                [
+                    row.get("room_name"),
+                    row.get("room_id"),
+                    row.get("name"),
+                    row.get("id"),
+                    row.get("current_level"),
+                    _format_percent(row.get("percent")),
+                    row.get("subtype"),
+                ]
+                for row in items
+            ]
+        print(render_csv(headers, rows))
+        return
+
+    if entity == "rooms":
+        headers = ["Name", "Room ID"]
+        rows = [[row.get("name"), row.get("id")] for row in items]
+        print(render_csv(headers, rows))
+        return
+
+    headers = ["Room", "Room ID", "Name", "Scene ID"]
+    rows = [[row.get("room_name"), row.get("room_id"), row.get("name"), row.get("id")] for row in items]
+    print(render_csv(headers, rows))
+
+
+def _reorder_item_keys(item: Dict[str, Any], preferred_keys: List[str]) -> Dict[str, Any]:
+    ordered: Dict[str, Any] = {}
+    for key in preferred_keys:
+        if key in item:
+            ordered[key] = item.get(key)
+    for key, value in item.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
+
+
+def _ordered_query_items(entity: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if entity == "lights":
+        preferred = ["room_name", "room_id", "name", "id", "current_level", "percent", "subtype"]
+    elif entity == "rooms":
+        preferred = ["name", "id"]
+    else:
+        preferred = ["room_name", "room_id", "name", "id"]
+
+    return [_reorder_item_keys(item, preferred) for item in items]
 
 
 def _initialize_command(argv: List[str]) -> int:
@@ -101,16 +279,22 @@ def _initialize_command(argv: List[str]) -> int:
 
 def _query_command(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="crestron-cli query", add_help=True)
-    parser.add_argument("entity", choices=["lights", "rooms", "scenes"])
+    parser.add_argument("token1", nargs="?", help="Entity or filter: lights|rooms|scenes or room=<id>")
+    parser.add_argument("token2", nargs="?", help="Optional second token in either order")
     parser.add_argument("--refresh", action="store_true", help="Force refresh before query")
+    parser.add_argument("--raw", action="store_true", help="Emit comma-separated values (CSV)")
     parser.add_argument("--json", action="store_true", help="Emit structured JSON")
     parser.add_argument("--yaml", action="store_true", help="Emit structured YAML")
     args = parser.parse_args(argv)
 
-    if args.json and args.yaml:
-        return _emit_error("choose only one of --json or --yaml")
+    if sum(1 for flag in (args.raw, args.json, args.yaml) if flag) > 1:
+        return _emit_error("choose only one of --raw, --json, or --yaml")
 
-    fmt = default_output_format(args.json, args.yaml)
+    fmt = _query_output_format(json_flag=args.json, yaml_flag=args.yaml, raw_flag=args.raw)
+    entity, room_id, parse_error = _parse_query_selector(args.token1, args.token2)
+    if parse_error:
+        error_fmt = "human" if fmt == "raw" else fmt
+        return _emit_error(parse_error, fmt=error_fmt)
 
     try:
         config = load_config()
@@ -122,33 +306,16 @@ def _query_command(argv: List[str]) -> int:
             state = _refresh_inventory(client, state)
             refreshed = True
 
-        if args.entity == "lights":
-            items = list_lights(state)
+        if entity == "lights":
+            items = list_lights(state, room_id=room_id)
             if fmt == "human":
-                lines = [f"Lights ({len(items)}):"]
-                for row in items:
-                    room_part = ""
-                    if row.get("room_name"):
-                        room_part = f", room {row['room_name']} ({row.get('room_id')})"
-                    elif row.get("room_id") is not None:
-                        room_part = f", room {row.get('room_id')}"
-
-                    level = row.get("current_level")
-                    percent = row.get("percent")
-                    if level is not None and percent is not None:
-                        level_part = f"level {level} ({percent}%)"
-                    elif level is not None:
-                        level_part = f"level {level}"
-                    else:
-                        level_part = "level unknown"
-
-                    subtype = row.get("subtype")
-                    subtype_part = f", subtype {subtype}" if subtype else ""
-                    lines.append(
-                        f"- {row.get('name')} [id {row.get('id')}] {level_part}{room_part}{subtype_part}"
-                    )
-                emit_payload({"success": True, "data": "\n".join(lines)}, fmt)
+                _emit_query_table(entity, items, room_id)
                 return 0
+            if fmt == "raw":
+                _emit_query_raw(entity, items, room_id)
+                return 0
+
+            items = _ordered_query_items(entity, items)
 
             emit_payload(
                 {
@@ -156,20 +323,23 @@ def _query_command(argv: List[str]) -> int:
                     "entity": "lights",
                     "count": len(items),
                     "refreshed": refreshed,
+                    "room_id": room_id,
                     "items": items,
                 },
                 fmt,
             )
             return 0
 
-        if args.entity == "rooms":
+        if entity == "rooms":
             items = list_rooms(state)
             if fmt == "human":
-                lines = [f"Rooms ({len(items)}):"]
-                for row in items:
-                    lines.append(f"- {row.get('name')} [id {row.get('id')}]")
-                emit_payload({"success": True, "data": "\n".join(lines)}, fmt)
+                _emit_query_table(entity, items, room_id)
                 return 0
+            if fmt == "raw":
+                _emit_query_raw(entity, items, room_id)
+                return 0
+
+            items = _ordered_query_items(entity, items)
 
             emit_payload(
                 {
@@ -183,18 +353,15 @@ def _query_command(argv: List[str]) -> int:
             )
             return 0
 
-        items = list_scenes(state)
+        items = list_scenes(state, room_id=room_id)
         if fmt == "human":
-            lines = [f"Scenes ({len(items)}):"]
-            for row in items:
-                room_part = ""
-                if row.get("room_name"):
-                    room_part = f", room {row['room_name']} ({row.get('room_id')})"
-                elif row.get("room_id") is not None:
-                    room_part = f", room {row.get('room_id')}"
-                lines.append(f"- {row.get('name')} [id {row.get('id')}]" + room_part)
-            emit_payload({"success": True, "data": "\n".join(lines)}, fmt)
+            _emit_query_table(entity, items, room_id)
             return 0
+        if fmt == "raw":
+            _emit_query_raw(entity, items, room_id)
+            return 0
+
+        items = _ordered_query_items(entity, items)
 
         emit_payload(
             {
@@ -202,6 +369,7 @@ def _query_command(argv: List[str]) -> int:
                 "entity": "scenes",
                 "count": len(items),
                 "refreshed": refreshed,
+                "room_id": room_id,
                 "items": items,
             },
             fmt,
@@ -338,9 +506,9 @@ def _print_root_help() -> None:
             "",
             "Usage:",
             "  crestron-cli initialize [--force] [--verbose] [--json|--yaml]",
-            "  crestron-cli query lights [--refresh] [--json|--yaml]",
-            "  crestron-cli query rooms [--refresh] [--json|--yaml]",
-            "  crestron-cli query scenes [--refresh] [--json|--yaml]",
+            "  crestron-cli query [lights|scenes] [room=<id>] [--refresh] [--raw|--json|--yaml]",
+            "  crestron-cli query room=<id> [lights|scenes] [--refresh] [--raw|--json|--yaml]",
+            "  crestron-cli query rooms [--refresh] [--raw|--json|--yaml]",
             "  crestron-cli <target> on [--json|--yaml]",
             "  crestron-cli <target> off [--json|--yaml]",
             "  crestron-cli <target> set <level> [--json|--yaml]",

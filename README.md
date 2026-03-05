@@ -91,13 +91,24 @@ exec "$PY" "$TOOL" "$@"
 
 ```text
 crestron-cli initialize [--force] [--verbose] [--json|--yaml]
-crestron-cli query lights [--refresh] [--json|--yaml]
-crestron-cli query rooms [--refresh] [--json|--yaml]
-crestron-cli query scenes [--refresh] [--json|--yaml]
+crestron-cli query [lights|scenes] [room=<id>] [--refresh] [--raw|--json|--yaml]
+crestron-cli query room=<id> [lights|scenes] [--refresh] [--raw|--json|--yaml]
+crestron-cli query rooms [--refresh] [--raw|--json|--yaml]
 crestron-cli <target> on [--json|--yaml]
 crestron-cli <target> off [--json|--yaml]
 crestron-cli <target> set <level> [--json|--yaml]
 crestron-cli <target> toggle [--json|--yaml]
+```
+
+Examples:
+
+```bash
+crestron-cli query
+crestron-cli query lights --raw
+crestron-cli query lights room=10
+crestron-cli query room=10 lights
+crestron-cli query scenes room=10
+crestron-cli query room=10 scenes --raw
 ```
 
 ### Target syntax
@@ -130,8 +141,7 @@ Behavior:
 
 ## Output modes
 
-- default: human-readable text
+- query default: human-readable table
+- `--raw`: CSV (comma-separated values)
 - `--json`: structured JSON
 - `--yaml`: structured YAML
-
-If `OPENCLAW_PY` is present and no format flag is provided, output defaults to YAML.

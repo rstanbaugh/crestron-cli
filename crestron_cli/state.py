@@ -256,7 +256,7 @@ def update_light_level(state: Dict[str, Any], light_id: int, level_raw: int) -> 
     return state
 
 
-def list_lights(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def list_lights(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[str, Any]]:
     lights = (state.get("lights") or {}).get("by_id") or {}
     out: List[Dict[str, Any]] = []
     for key, item in lights.items():
@@ -264,11 +264,26 @@ def list_lights(state: Dict[str, Any]) -> List[Dict[str, Any]]:
             continue
         row = dict(item)
         row["id"] = int(item.get("id", key))
+        if room_id is not None:
+            try:
+                row_room_id = int(row.get("room_id"))
+            except Exception:
+                continue
+            if row_room_id != room_id:
+                continue
+            row["room_id"] = row_room_id
         room_name = room_name_for_id(state, row.get("room_id"))
         if room_name:
             row["room_name"] = room_name
         out.append(row)
-    out.sort(key=lambda entry: (str(entry.get("name") or "").lower(), int(entry.get("id") or 0)))
+    out.sort(
+        key=lambda entry: (
+            0 if entry.get("room_name") else 1,
+            str(entry.get("room_name") or "").lower(),
+            str(entry.get("name") or "").lower(),
+            int(entry.get("id") or 0),
+        )
+    )
     return out
 
 
@@ -285,7 +300,7 @@ def list_rooms(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
-def list_scenes(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def list_scenes(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[str, Any]]:
     scenes = (state.get("scenes") or {}).get("by_id") or {}
     out: List[Dict[str, Any]] = []
     for key, item in scenes.items():
@@ -293,9 +308,24 @@ def list_scenes(state: Dict[str, Any]) -> List[Dict[str, Any]]:
             continue
         row = dict(item)
         row["id"] = int(item.get("id", key))
+        if room_id is not None:
+            try:
+                row_room_id = int(row.get("room_id"))
+            except Exception:
+                continue
+            if row_room_id != room_id:
+                continue
+            row["room_id"] = row_room_id
         room_name = room_name_for_id(state, row.get("room_id"))
         if room_name:
             row["room_name"] = room_name
         out.append(row)
-    out.sort(key=lambda entry: (str(entry.get("name") or "").lower(), int(entry.get("id") or 0)))
+    out.sort(
+        key=lambda entry: (
+            0 if entry.get("room_name") else 1,
+            str(entry.get("room_name") or "").lower(),
+            str(entry.get("name") or "").lower(),
+            int(entry.get("id") or 0),
+        )
+    )
     return out
