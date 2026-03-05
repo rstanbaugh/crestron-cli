@@ -22,7 +22,7 @@ MVP scope implements:
 - authentication and session key flow
 - inventory sync (`rooms`, `lights`, `scenes`)
 - persisted cache in `state.yaml`
-- query commands for lights/scenes
+- query commands for lights/rooms/scenes
 - light control commands: `on`, `off`, `set`, `toggle`
 
 Out of scope for MVP:
@@ -87,6 +87,11 @@ commands:
     effects:
       - read state or refresh
       - render light data
+  query_rooms:
+    syntax: crestron-cli query rooms [--refresh] [--json|--yaml]
+    effects:
+      - read state or refresh
+      - render room data
   query_scenes:
     syntax: crestron-cli query scenes [--refresh] [--json|--yaml]
     effects:

@@ -100,6 +100,7 @@ Flat command style:
 ```
 crestron-cli initialize [--force] [--verbose]
 crestron-cli query lights [--refresh] [--json|--yaml]
+crestron-cli query rooms [--refresh] [--json|--yaml]
 crestron-cli query scenes [--refresh] [--json|--yaml]
 crestron-cli <target> on
 crestron-cli <target> off
@@ -117,6 +118,7 @@ Save state.yaml
 Print summary (room/light/scene counts)
 
 `query lights`: name, id, room name/id, current level (raw + %)
+`query rooms`: name, id
 `query scenes`: name, id
 Actions: POST /lights/SetState
 on/off: level 65535 / 0

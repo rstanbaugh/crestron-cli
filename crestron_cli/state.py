@@ -272,6 +272,19 @@ def list_lights(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def list_rooms(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rooms = (state.get("rooms") or {}).get("by_id") or {}
+    out: List[Dict[str, Any]] = []
+    for key, item in rooms.items():
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        row["id"] = int(item.get("id", key))
+        out.append(row)
+    out.sort(key=lambda entry: (str(entry.get("name") or "").lower(), int(entry.get("id") or 0)))
+    return out
+
+
 def list_scenes(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     scenes = (state.get("scenes") or {}).get("by_id") or {}
     out: List[Dict[str, Any]] = []

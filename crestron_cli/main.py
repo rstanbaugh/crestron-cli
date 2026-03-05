@@ -11,6 +11,7 @@ from .state import (
     build_state,
     has_cached_inventory,
     list_lights,
+    list_rooms,
     list_scenes,
     load_state,
     resolve_light_target,
@@ -100,7 +101,7 @@ def _initialize_command(argv: List[str]) -> int:
 
 def _query_command(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="crestron-cli query", add_help=True)
-    parser.add_argument("entity", choices=["lights", "scenes"])
+    parser.add_argument("entity", choices=["lights", "rooms", "scenes"])
     parser.add_argument("--refresh", action="store_true", help="Force refresh before query")
     parser.add_argument("--json", action="store_true", help="Emit structured JSON")
     parser.add_argument("--yaml", action="store_true", help="Emit structured YAML")
@@ -153,6 +154,27 @@ def _query_command(argv: List[str]) -> int:
                 {
                     "success": True,
                     "entity": "lights",
+                    "count": len(items),
+                    "refreshed": refreshed,
+                    "items": items,
+                },
+                fmt,
+            )
+            return 0
+
+        if args.entity == "rooms":
+            items = list_rooms(state)
+            if fmt == "human":
+                lines = [f"Rooms ({len(items)}):"]
+                for row in items:
+                    lines.append(f"- {row.get('name')} [id {row.get('id')}]")
+                emit_payload({"success": True, "data": "\n".join(lines)}, fmt)
+                return 0
+
+            emit_payload(
+                {
+                    "success": True,
+                    "entity": "rooms",
                     "count": len(items),
                     "refreshed": refreshed,
                     "items": items,
@@ -310,23 +332,27 @@ def _action_command(argv: List[str]) -> int:
 
 
 def _print_root_help() -> None:
-    text = """crestron-cli
-
-Usage:
-  crestron-cli initialize [--force] [--verbose] [--json|--yaml]
-  crestron-cli query lights [--refresh] [--json|--yaml]
-  crestron-cli query scenes [--refresh] [--json|--yaml]
-  crestron-cli <target> on [--json|--yaml]
-  crestron-cli <target> off [--json|--yaml]
-  crestron-cli <target> set <level> [--json|--yaml]
-  crestron-cli <target> toggle [--json|--yaml]
-
-Environment:
-  CRESTRON_HOME_IP (required)
-  CRESTRON_AUTH_TOKEN (required)
-  CRESTRON_TIMEOUT_S (optional, default 10)
-"""
-    print(text.strip())
+    text = "\n".join(
+        [
+            "crestron-cli",
+            "",
+            "Usage:",
+            "  crestron-cli initialize [--force] [--verbose] [--json|--yaml]",
+            "  crestron-cli query lights [--refresh] [--json|--yaml]",
+            "  crestron-cli query rooms [--refresh] [--json|--yaml]",
+            "  crestron-cli query scenes [--refresh] [--json|--yaml]",
+            "  crestron-cli <target> on [--json|--yaml]",
+            "  crestron-cli <target> off [--json|--yaml]",
+            "  crestron-cli <target> set <level> [--json|--yaml]",
+            "  crestron-cli <target> toggle [--json|--yaml]",
+            "",
+            "Environment:",
+            "  CRESTRON_HOME_IP (required)",
+            "  CRESTRON_AUTH_TOKEN (required)",
+            "  CRESTRON_TIMEOUT_S (optional, default 10)",
+        ]
+    )
+    print(text)
 
 
 def main(argv: List[str] | None = None) -> int:

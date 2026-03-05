@@ -4,7 +4,7 @@ Lightweight CLI for Crestron Home control with cache-backed targeting.
 
 Current MVP supports:
 - initialize and cache inventory (`rooms`, `lights`, `scenes`)
-- query lights/scenes
+- query lights/rooms/scenes
 - light actions (`on`, `off`, `set`, `toggle`)
 
 ## Runtime model
@@ -66,6 +66,7 @@ exec "$PY" "$TOOL" "$@"
 ```text
 crestron-cli initialize [--force] [--verbose] [--json|--yaml]
 crestron-cli query lights [--refresh] [--json|--yaml]
+crestron-cli query rooms [--refresh] [--json|--yaml]
 crestron-cli query scenes [--refresh] [--json|--yaml]
 crestron-cli <target> on [--json|--yaml]
 crestron-cli <target> off [--json|--yaml]
