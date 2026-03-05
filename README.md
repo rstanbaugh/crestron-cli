@@ -1,34 +1,64 @@
 # crestron-cli
 
-Lightweight CLI for interacting with a Crestron Home server, with MVP support for:
-- inventory initialization (`rooms`, `lights`, `scenes`)
-- querying lights/scenes
-- controlling lights by id or name
+Lightweight CLI for Crestron Home control with cache-backed targeting.
 
-## Requirements
+Current MVP supports:
+- initialize and cache inventory (`rooms`, `lights`, `scenes`)
+- query lights/scenes
+- light actions (`on`, `off`, `set`, `toggle`)
 
-- Python 3.9+
-- `requests`
-- `pyyaml`
+## Runtime model
 
-Environment variables:
+- Primary runtime: conda env `openclaw`
+- Primary entrypoint: `~/bin/crestron-cli` (thin shell wrapper)
+- Core program: `~/.openclaw/tools/crestron/crestron-cli.py`
+
+The wrapper should only load env vars and dispatch to Python.
+
+## Dependencies (conda)
+
+Install in `openclaw`:
+
+```bash
+conda install -n openclaw -y requests pyyaml
+```
+
+## Environment variables
+
+Defined in `~/.openclaw/.env`:
 
 - `CRESTRON_HOME_IP` (required)
 - `CRESTRON_AUTH_TOKEN` (required)
 - `CRESTRON_TIMEOUT_S` (optional, default `10`)
+- `OPENCLAW_PY` (optional; defaults to `python3` in wrapper)
 
-## Installation
+Example:
 
-From this folder:
-
-```bash
-pip install -e .
+```dotenv
+CRESTRON_HOME_IP=192.168.0.201
+CRESTRON_AUTH_TOKEN=YOUR_BASE_TOKEN
+CRESTRON_TIMEOUT_S=10
+OPENCLAW_PY=/opt/homebrew/Caskroom/miniforge/base/envs/openclaw/bin/python
 ```
 
-Or run directly:
+## `~/bin/crestron-cli` wrapper
 
 ```bash
-python crestron-cli.py --help
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="$HOME/.openclaw/.env"
+if [[ -f "$ENV_FILE" ]]; then
+	set -a
+	# shellcheck disable=SC1090
+	source "$ENV_FILE"
+	set +a
+fi
+
+PY="${OPENCLAW_PY:-python3}"
+TOOL="$HOME/.openclaw/tools/crestron/crestron-cli.py"
+
+exec "$PY" "$TOOL" "$@"
 ```
 
 ## Commands
@@ -43,21 +73,37 @@ crestron-cli <target> set <level> [--json|--yaml]
 crestron-cli <target> toggle [--json|--yaml]
 ```
 
-`<target>` may be a numeric light id or a case-insensitive cached light name.
+### Target syntax
+
+Supported target formats:
+- numeric id: `1135`
+- id token: `light=1135` or `id=1135`
+- cached name: `"Billiards Table"`
+
+Examples:
+
+```bash
+crestron-cli light=1135 toggle --yaml
+crestron-cli light=1135 set 50 --yaml
+crestron-cli "Billiards Table" off --yaml
+```
 
 ## State cache
 
-State is stored at:
+State file:
 
 ```text
 ~/.openclaw/tools/crestron/state.yaml
 ```
 
-`initialize` always refreshes from the server and rebuilds state maps.
+Behavior:
+- `initialize` always refreshes and rebuilds state maps
+- `query` is cache-first unless `--refresh` is supplied
+- actions resolve targets from cache and update cache after success
 
 ## Output modes
 
-- Default: human-readable text
+- default: human-readable text
 - `--json`: structured JSON
 - `--yaml`: structured YAML
 
