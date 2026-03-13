@@ -145,5 +145,3 @@ Behavior:
 - `--raw`: CSV (comma-separated values)
 - `--json`: structured JSON
 - `--yaml`: structured YAML
-
-
