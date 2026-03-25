@@ -12,6 +12,9 @@ __pycache__/
 # Local env / secrets
 .env
 *.env
+.env.*
+state.yaml
+Insomnia_*.local.yaml
 
 # Logs / scratch
 *.log

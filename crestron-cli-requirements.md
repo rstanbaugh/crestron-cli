@@ -54,9 +54,9 @@ Structure (extensible design):
 ```yaml
 version: 1
 last_refresh: "2026-03-04T22:13:45Z"   # ISO 8601 UTC
-base_url: "http://192.168.0.201/cws/api"
+base_url: "http://YOUR_CONTROLLER_IP/cws/api"
 auth:
-  authkey: "nfLLZa6etB5q"
+  authkey: "<session-authkey>"
   expires_approx: "2026-03-05T06:13:45Z"   # optional
 rooms:
   by_id:

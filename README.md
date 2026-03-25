@@ -80,7 +80,7 @@ Defined in `~/.openclaw/.env`:
 Example:
 
 ```dotenv
-CRESTRON_HOME_IP=192.168.0.201
+CRESTRON_HOME_IP=YOUR_CONTROLLER_IP
 CRESTRON_AUTH_TOKEN=YOUR_BASE_TOKEN
 CRESTRON_TIMEOUT_S=10
 OPENCLAW_PY=/opt/homebrew/Caskroom/miniforge/base/envs/openclaw/bin/python

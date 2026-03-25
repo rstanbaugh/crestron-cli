@@ -1,0 +1,28 @@
+version: 1
+last_refresh: null
+base_url: http://YOUR_CONTROLLER_IP/cws/api
+auth:
+  authkey: null
+  expires_approx: null
+rooms:
+  by_id: {}
+  by_name_normalized: {}
+lights:
+  by_id: {}
+  by_name_normalized: {}
+scenes:
+  by_id: {}
+  by_name_normalized: {}
+speakers:
+  by_id: {}
+  by_name_normalized: {}
+speaker_presets:
+  by_room_id: {}
+quickactions: {}
+metadata:
+  server_firmware: null
+  last_successful_init: null
+  refresh_count: 0
+audio_defaults:
+  A: {}
+  B: {}
