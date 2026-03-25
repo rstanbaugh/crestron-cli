@@ -30,7 +30,7 @@ For OpenClaw or other automation agents, use structured output and parse only st
 - Treat exit code `0` as success and non-zero as failure
 - In structured modes, parse `success` first
 - On failures, parse `error` and optional `details`
-- Use `--refresh` on query commands when fresh inventory is required
+- Query commands refresh live inventory by default
 
 Suggested command sequence for agents:
 
@@ -175,7 +175,7 @@ State file:
 
 Behavior:
 - `initialize` always refreshes and rebuilds state maps
-- `query` is cache-first unless `--refresh` is supplied
+- `query` refreshes inventory by default before returning results
 - actions resolve targets from cache and update cache after success
 
 ## Output modes

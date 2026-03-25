@@ -9,6 +9,7 @@ from .config import ConfigError, load_config
 from .state import (
     StateError,
     build_state,
+    get_speaker_player_default,
     has_cached_inventory,
     list_lights,
     list_rooms,
@@ -21,6 +22,7 @@ from .state import (
     resolve_speaker_source_target,
     resolve_speaker_target,
     save_state,
+    set_speaker_player_default,
     update_light_level,
     update_speaker_state,
 )
@@ -284,6 +286,25 @@ def _set_audio_default(state: Dict[str, Any], player: str, source_id: int, sourc
     return state
 
 
+def _player_source_catalog(state: Dict[str, Any]) -> Dict[str, Dict[int, str]]:
+    catalog: Dict[str, Dict[int, str]] = {"A": {}, "B": {}}
+    for speaker in list_speakers(state):
+        for source in speaker.get("available_sources") or []:
+            if not isinstance(source, dict):
+                continue
+            try:
+                source_id = int(source.get("id")) if source.get("id") is not None else None
+            except Exception:
+                source_id = None
+            if source_id is None:
+                continue
+            raw_name = str(source.get("source_name") or "")
+            player = _infer_player_from_source_name(raw_name)
+            if player in {"A", "B"}:
+                catalog[player][source_id] = _strip_player_prefix(raw_name) or raw_name
+    return catalog
+
+
 def _collect_audio_sources(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[str, Any]]:
     by_id: Dict[int, Dict[str, Any]] = {}
     for speaker in list_speakers(state, room_id=room_id):
@@ -296,13 +317,22 @@ def _collect_audio_sources(state: Dict[str, Any], room_id: int | None = None) ->
                 source_id = None
             if source_id is None:
                 continue
-            source_name = str(source.get("source_name") or "")
+            raw_source_name = str(source.get("source_name") or "")
+            player = _infer_player_from_source_name(raw_source_name)
+            source_name = _strip_player_prefix(raw_source_name) or raw_source_name
             by_id[source_id] = {
                 "source_id": source_id,
-                "source_name": _strip_player_prefix(source_name) or source_name,
+                "source_name": source_name,
+                "player": f"Player {player}" if player in {"A", "B"} else "unset",
             }
     items = list(by_id.values())
-    items.sort(key=lambda row: (str(row.get("source_name") or "").lower(), int(row.get("source_id") or 0)))
+    items.sort(
+        key=lambda row: (
+            str(row.get("player") or "").lower(),
+            str(row.get("source_name") or "").lower(),
+            int(row.get("source_id") or 0),
+        )
+    )
     return items
 
 
@@ -331,6 +361,9 @@ def _list_audio_status(state: Dict[str, Any], room_id: int | None = None) -> Lis
                 current_source_name = str(source.get("source_name") or "")
                 break
 
+        player = _infer_player_from_source_name(current_source_name)
+        source_display = _strip_player_prefix(current_source_name) if player in {"A", "B"} else None
+
         items.append(
             {
                 "name": speaker.get("name"),
@@ -338,7 +371,8 @@ def _list_audio_status(state: Dict[str, Any], room_id: int | None = None) -> Lis
                 "current_power_state": speaker.get("current_power_state") or "unknown",
                 "current_mute_state": speaker.get("current_mute_state") or "unknown",
                 "current_volume_percent": volume_percent,
-                "player": _infer_player_from_source_name(current_source_name),
+                "player": player,
+                "source": source_display,
                 "room_id": speaker.get("room_id"),
                 "room_name": speaker.get("room_name"),
             }
@@ -413,10 +447,16 @@ def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | N
         return
 
     if entity == "audio":
-        if items and "player" in items[0] and "source" in items[0]:
+        if items and "player" in items[0] and "source" in items[0] and "name" not in items[0]:
             headers = ["Player", "Source", "Source ID"]
             rows = [[row.get("player"), row.get("source"), row.get("source_id")] for row in items]
             print(f"Audio players ({len(items)})\n{render_table(headers, rows)}")
+            return
+
+        if items and "source_id" in items[0] and "source_name" in items[0] and "player" in items[0]:
+            headers = ["Player", "Sources", "Source ID"]
+            rows = [[row.get("player"), row.get("source_name"), row.get("source_id")] for row in items]
+            print(f"Audio sources ({len(items)})\n{render_table(headers, rows)}")
             return
 
         if items and "source_id" in items[0] and "source_name" in items[0] and "player" not in items[0]:
@@ -425,7 +465,7 @@ def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | N
             print(f"Audio sources ({len(items)})\n{render_table(headers, rows)}")
             return
 
-        headers = ["Name", "Speaker ID", "Power", "Mute", "Volume %", "Player"]
+        headers = ["Name", "Speaker ID", "Power", "Mute", "Volume %", "Player", "Source"]
         rows = [
             [
                 row.get("name"),
@@ -434,6 +474,7 @@ def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | N
                 row.get("current_mute_state"),
                 row.get("current_volume_percent"),
                 row.get("player"),
+                row.get("source"),
             ]
             for row in items
         ]
@@ -495,9 +536,15 @@ def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | Non
         return
 
     if entity == "audio":
-        if items and "player" in items[0] and "source" in items[0]:
+        if items and "player" in items[0] and "source" in items[0] and "name" not in items[0]:
             headers = ["Player", "Source", "Source ID"]
             rows = [[row.get("player"), row.get("source"), row.get("source_id")] for row in items]
+            print(render_csv(headers, rows))
+            return
+
+        if items and "source_id" in items[0] and "source_name" in items[0] and "player" in items[0]:
+            headers = ["Player", "Sources", "Source ID"]
+            rows = [[row.get("player"), row.get("source_name"), row.get("source_id")] for row in items]
             print(render_csv(headers, rows))
             return
 
@@ -507,7 +554,7 @@ def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | Non
             print(render_csv(headers, rows))
             return
 
-        headers = ["Name", "Speaker ID", "Power", "Mute", "Volume %", "Player"]
+        headers = ["Name", "Speaker ID", "Power", "Mute", "Volume %", "Player", "Source"]
         rows = [
             [
                 row.get("name"),
@@ -516,6 +563,7 @@ def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | Non
                 row.get("current_mute_state"),
                 row.get("current_volume_percent"),
                 row.get("player"),
+                row.get("source"),
             ]
             for row in items
         ]
@@ -658,7 +706,8 @@ def _query_command(argv: List[str]) -> int:
         state = load_state()
 
         refreshed = False
-        if args.refresh or not has_cached_inventory(state):
+        force_live_query = True
+        if args.refresh or force_live_query or not has_cached_inventory(state):
             state = _refresh_inventory(client, state)
             refreshed = True
 
@@ -1669,7 +1718,13 @@ def _handle_audio_global_assignment(argv: List[str]) -> int:
         if not has_cached_inventory(state):
             state = _refresh_inventory(client, state)
 
-        sources = _collect_audio_sources(state)
+        # Resolve from the same source dataset exposed by `query audio source`.
+        all_sources = _collect_audio_sources(state)
+        sources = [
+            source
+            for source in all_sources
+            if str(source.get("player") or "").strip().lower() == f"player {player}".lower()
+        ]
         selected: Dict[str, Any] | None = None
         if source_target.isdigit():
             wanted = int(source_target)
@@ -1679,16 +1734,36 @@ def _handle_audio_global_assignment(argv: List[str]) -> int:
                     break
         else:
             wanted_name = source_target.strip().lower()
-            for source in sources:
-                if str(source.get("source_name") or "").strip().lower() == wanted_name:
-                    selected = source
-                    break
+            exact_matches = [
+                source
+                for source in sources
+                if str(source.get("source_name") or "").strip().lower() == wanted_name
+            ]
+            if len(exact_matches) == 1:
+                selected = exact_matches[0]
+            elif len(exact_matches) > 1:
+                ids = ", ".join(str(match.get("source_id")) for match in exact_matches)
+                return _emit_error(
+                    "audio player assignment failed",
+                    fmt=fmt,
+                    details=f"ambiguous source name '{source_target}' for Player {player}; use source id ({ids})",
+                )
+
             if selected is None:
-                for source in sources:
-                    source_name = str(source.get("source_name") or "").strip().lower()
-                    if wanted_name in source_name:
-                        selected = source
-                        break
+                partial_matches = [
+                    source
+                    for source in sources
+                    if wanted_name in str(source.get("source_name") or "").strip().lower()
+                ]
+                if len(partial_matches) == 1:
+                    selected = partial_matches[0]
+                elif len(partial_matches) > 1:
+                    ids = ", ".join(str(match.get("source_id")) for match in partial_matches)
+                    return _emit_error(
+                        "audio player assignment failed",
+                        fmt=fmt,
+                        details=f"ambiguous source match '{source_target}' for Player {player}; use source id ({ids})",
+                    )
 
         if selected is None:
             return _emit_error("audio player assignment failed", fmt=fmt, details=f"unknown source '{source_target}'")
@@ -1798,6 +1873,12 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
         selected_source_name: str | None = None
         if effective_player in {"A", "B"}:
             preferred_source_id: int | None = None
+            room_preferred_source_id: int | None = None
+            room_id = speaker.get("room_id")
+            try:
+                room_preferred_source_id = get_speaker_player_default(state, int(room_id), effective_player) if room_id is not None else None
+            except Exception:
+                room_preferred_source_id = None
             defaults = _get_audio_defaults(state)
             default_entry = defaults.get(effective_player) or {}
             try:
@@ -1808,7 +1889,7 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
                 speaker,
                 None,
                 player=effective_player,
-                preferred_source_id=preferred_source_id,
+                preferred_source_id=room_preferred_source_id if room_preferred_source_id is not None else preferred_source_id,
             )
 
         if on_flag:
@@ -1919,6 +2000,16 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
                 current_source_name = str(src.get("source_name") or "")
                 current_player = _infer_player_from_source_name(current_source_name)
                 break
+
+        # Learn room-specific source IDs per player so subsequent routes reuse
+        # the channel that actually works for this room/amp path.
+        room_id_for_preset = current.get("room_id") or speaker.get("room_id")
+        if current_source_id is not None and current_player in {"A", "B"} and room_id_for_preset is not None:
+            try:
+                state = set_speaker_player_default(state, int(room_id_for_preset), current_player, int(current_source_id))
+                save_state(state)
+            except Exception:
+                pass
 
         emit_payload(
             {
