@@ -15,6 +15,7 @@ from .state import (
     list_scenes,
     load_state,
     resolve_light_target,
+    resolve_scene_target,
     save_state,
     update_light_level,
 )
@@ -160,8 +161,17 @@ def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | N
         print(f"Rooms ({len(items)})\n{render_table(headers, rows)}")
         return
 
-    headers = ["Room", "Room ID", "Name", "Scene ID"]
-    rows = [[row.get("room_name"), row.get("room_id"), row.get("name"), row.get("id")] for row in items]
+    headers = ["Room", "Room ID", "Name", "Scene Type", "Scene ID"]
+    rows = [
+        [
+            row.get("room_name"),
+            row.get("room_id"),
+            row.get("name"),
+            row.get("scene_type"),
+            row.get("id"),
+        ]
+        for row in items
+    ]
     print(f"Scenes ({len(items)})\n{render_table(headers, rows)}")
 
 
@@ -204,8 +214,17 @@ def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | Non
         print(render_csv(headers, rows))
         return
 
-    headers = ["Room", "Room ID", "Name", "Scene ID"]
-    rows = [[row.get("room_name"), row.get("room_id"), row.get("name"), row.get("id")] for row in items]
+    headers = ["Room", "Room ID", "Name", "Scene Type", "Scene ID"]
+    rows = [
+        [
+            row.get("room_name"),
+            row.get("room_id"),
+            row.get("name"),
+            row.get("scene_type"),
+            row.get("id"),
+        ]
+        for row in items
+    ]
     print(render_csv(headers, rows))
 
 
@@ -226,7 +245,7 @@ def _ordered_query_items(entity: str, items: List[Dict[str, Any]]) -> List[Dict[
     elif entity == "rooms":
         preferred = ["name", "id"]
     else:
-        preferred = ["room_name", "room_id", "name", "id"]
+        preferred = ["room_name", "room_id", "name", "scene_type", "id", "status"]
 
     return [_reorder_item_keys(item, preferred) for item in items]
 
@@ -354,6 +373,14 @@ def _query_command(argv: List[str]) -> int:
             return 0
 
         items = list_scenes(state, room_id=room_id)
+
+        # Older cache files may not have scene_type populated; auto-refresh once.
+        missing_scene_type = any(not row.get("scene_type") for row in items)
+        if missing_scene_type and not args.refresh:
+            state = _refresh_inventory(client, state)
+            refreshed = True
+            items = list_scenes(state, room_id=room_id)
+
         if fmt == "human":
             _emit_query_table(entity, items, room_id)
             return 0
@@ -405,6 +432,17 @@ def _normalize_target_token(target: str) -> str:
     token = target.strip()
     lowered = token.lower()
     for prefix in ("light=", "id=", "light:", "id:"):
+        if lowered.startswith(prefix):
+            value = token[len(prefix):].strip()
+            if value:
+                return value
+    return token
+
+
+def _normalize_scene_target_token(target: str) -> str:
+    token = target.strip()
+    lowered = token.lower()
+    for prefix in ("scene=", "id=", "scene:", "id:"):
         if lowered.startswith(prefix):
             value = token[len(prefix):].strip()
             if value:
@@ -499,6 +537,71 @@ def _action_command(argv: List[str]) -> int:
         return _emit_error("action failed", fmt=fmt, details=str(exc))
 
 
+def _scene_command(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="crestron-cli scene",
+        add_help=True,
+        usage="crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
+    )
+    parser.add_argument("target")
+    parser.add_argument("action", choices=["activate"])
+    parser.add_argument("--type", choices=["lighting", "media"], dest="scene_type", help="Optional scene type")
+    parser.add_argument("--room-id", type=int, help="Optional room id for disambiguation")
+    parser.add_argument("--json", action="store_true", help="Emit structured JSON")
+    parser.add_argument("--yaml", action="store_true", help="Emit structured YAML")
+    args = parser.parse_args(argv)
+
+    if args.json and args.yaml:
+        return _emit_error("choose only one of --json or --yaml")
+
+    fmt = default_output_format(args.json, args.yaml)
+
+    try:
+        config = load_config()
+        client = CrestronClient(config)
+        state = load_state()
+
+        if not has_cached_inventory(state):
+            state = _refresh_inventory(client, state)
+
+        target_token = _normalize_scene_target_token(args.target)
+        scene_id, scene = resolve_scene_target(
+            state,
+            target_token,
+            scene_type=args.scene_type,
+            room_id=args.room_id,
+        )
+
+        try:
+            client.recall_scene(scene_id=scene_id)
+        except CrestronApiError as exc:
+            if exc.error_source in (5001, 5002):
+                state = _refresh_inventory(client, state)
+                client.recall_scene(scene_id=scene_id)
+            else:
+                raise
+
+        scene_name = str(scene.get("name") or f"Scene {scene_id}")
+        payload = {
+            "success": True,
+            "message": f"Scene {scene_name} activated",
+            "data": {
+                "id": scene_id,
+                "name": scene_name,
+                "action": "activate",
+                "scene_type": scene.get("scene_type"),
+                "room_id": scene.get("room_id"),
+            },
+        }
+        emit_payload(payload, fmt)
+        return 0
+
+    except ConfigError as exc:
+        return _emit_error(str(exc), fmt=fmt)
+    except (CrestronApiError, StateError, RuntimeError) as exc:
+        return _emit_error("scene action failed", fmt=fmt, details=str(exc))
+
+
 def _print_root_help() -> None:
     text = "\n".join(
         [
@@ -509,6 +612,7 @@ def _print_root_help() -> None:
             "  crestron-cli query [lights|scenes] [room=<id>] [--refresh] [--raw|--json|--yaml]",
             "  crestron-cli query room=<id> [lights|scenes] [--refresh] [--raw|--json|--yaml]",
             "  crestron-cli query rooms [--refresh] [--raw|--json|--yaml]",
+            "  crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
             "  crestron-cli <target> on [--json|--yaml]",
             "  crestron-cli <target> off [--json|--yaml]",
             "  crestron-cli <target> set <level> [--json|--yaml]",
@@ -535,6 +639,8 @@ def main(argv: List[str] | None = None) -> int:
         return _initialize_command(argv[1:])
     if command == "query":
         return _query_command(argv[1:])
+    if command == "scene":
+        return _scene_command(argv[1:])
 
     return _action_command(argv)
 

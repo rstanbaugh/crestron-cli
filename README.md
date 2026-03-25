@@ -6,6 +6,7 @@ Current MVP supports:
 - initialize and cache inventory (`rooms`, `lights`, `scenes`)
 - query lights/rooms/scenes
 - light actions (`on`, `off`, `set`, `toggle`)
+- scene activation (`scene <target> activate`) for lighting and media scenes
 
 ## AI/Agent Usage (Recommended)
 
@@ -29,8 +30,9 @@ crestron-cli "Kitchen Island" set 35 --yaml
 Structured response shape (stable contract):
 
 - initialize: `success`, `message`, `data.rooms`, `data.lights`, `data.scenes`, `data.state_path`
-- query lights|rooms|scenes: `success`, `entity`, `count`, `refreshed`, `items[]`
+- query lights|rooms|scenes: `success`, `entity`, `count`, `refreshed`, `items[]` (scene items include `scene_type`)
 - actions (on/off/set/toggle): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.level_raw`, `data.level_percent`
+- scene action (activate): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.scene_type`, `data.room_id`
 - errors: `success: false`, `error`, optional `details`
 
 ## Runtime model
@@ -94,6 +96,7 @@ crestron-cli initialize [--force] [--verbose] [--json|--yaml]
 crestron-cli query [lights|scenes] [room=<id>] [--refresh] [--raw|--json|--yaml]
 crestron-cli query room=<id> [lights|scenes] [--refresh] [--raw|--json|--yaml]
 crestron-cli query rooms [--refresh] [--raw|--json|--yaml]
+crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]
 crestron-cli <target> on [--json|--yaml]
 crestron-cli <target> off [--json|--yaml]
 crestron-cli <target> set <level> [--json|--yaml]
@@ -109,6 +112,8 @@ crestron-cli query lights room=10
 crestron-cli query room=10 lights
 crestron-cli query scenes room=10
 crestron-cli query room=10 scenes --raw
+crestron-cli scene "Happy Hour" activate --type media --yaml
+crestron-cli scene id=52138 activate --yaml
 ```
 
 ### Target syntax
@@ -145,3 +150,5 @@ Behavior:
 - `--raw`: CSV (comma-separated values)
 - `--json`: structured JSON
 - `--yaml`: structured YAML
+
+For `query scenes`, all output modes include `scene_type`.

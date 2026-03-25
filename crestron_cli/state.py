@@ -142,7 +142,7 @@ def _build_light_maps(lights: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def _build_scene_maps(scenes: List[Dict[str, Any]]) -> Dict[str, Any]:
     by_id: Dict[str, Dict[str, Any]] = {}
-    by_name: Dict[str, int] = {}
+    by_name: Dict[str, List[int]] = {}
 
     for scene in scenes:
         scene_id = scene.get("id")
@@ -157,12 +157,18 @@ def _build_scene_maps(scenes: List[Dict[str, Any]]) -> Dict[str, Any]:
             "id": scene_id_int,
             "name": str(scene.get("name") or f"Scene {scene_id_int}"),
             "room_id": scene.get("room_id"),
+            "scene_type": scene.get("scene_type"),
+            "status": scene.get("status"),
         }
         by_id[str(scene_id_int)] = record
 
         normalized = normalize_name(record["name"])
         if normalized:
-            by_name[normalized] = scene_id_int
+            existing = by_name.get(normalized)
+            if isinstance(existing, list):
+                existing.append(scene_id_int)
+            else:
+                by_name[normalized] = [scene_id_int]
 
     return {"by_id": by_id, "by_name_normalized": by_name}
 
@@ -308,6 +314,10 @@ def list_scenes(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[
             continue
         row = dict(item)
         row["id"] = int(item.get("id", key))
+        if "scene_type" not in row:
+            row["scene_type"] = None
+        if "status" not in row:
+            row["status"] = None
         if room_id is not None:
             try:
                 row_room_id = int(row.get("room_id"))
@@ -329,3 +339,67 @@ def list_scenes(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[
         )
     )
     return out
+
+
+def resolve_scene_target(
+    state: Dict[str, Any],
+    target: str,
+    *,
+    scene_type: str | None = None,
+    room_id: int | None = None,
+) -> Tuple[int, Dict[str, Any]]:
+    scenes = (state.get("scenes") or {}).get("by_id") or {}
+
+    if target.strip().isdigit():
+        key = str(int(target.strip()))
+        scene = scenes.get(key)
+        if not isinstance(scene, dict):
+            raise StateError(f"unknown scene id {target}")
+        return int(key), scene
+
+    normalized_target = normalize_name(target)
+    wanted_type = normalize_name(scene_type) if scene_type else None
+
+    matches: List[Tuple[int, Dict[str, Any]]] = []
+    for key, raw in scenes.items():
+        if not isinstance(raw, dict):
+            continue
+        try:
+            scene_id = int(raw.get("id", key))
+        except Exception:
+            continue
+
+        if normalize_name(raw.get("name")) != normalized_target:
+            continue
+
+        if room_id is not None:
+            try:
+                entry_room_id = int(raw.get("room_id"))
+            except Exception:
+                continue
+            if entry_room_id != room_id:
+                continue
+
+        if wanted_type:
+            entry_type = normalize_name(raw.get("scene_type"))
+            if entry_type != wanted_type:
+                continue
+
+        matches.append((scene_id, raw))
+
+    if not matches:
+        raise StateError(f"unknown scene target '{target}'")
+
+    if len(matches) > 1:
+        summary = ", ".join(
+            [
+                f"id={scene_id},type={entry.get('scene_type') or 'unknown'},room_id={entry.get('room_id')}"
+                for scene_id, entry in matches[:6]
+            ]
+        )
+        raise StateError(
+            "ambiguous scene target; provide scene id, --type, or --room-id"
+            + (f" (matches: {summary})" if summary else "")
+        )
+
+    return matches[0]

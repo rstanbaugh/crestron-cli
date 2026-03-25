@@ -119,7 +119,8 @@ Print summary (room/light/scene counts)
 
 `query lights`: name, id, room name/id, current level (raw + %)
 `query rooms`: name, id
-`query scenes`: name, id
+`query scenes`: name, id, room, scene type
+Scene activation: `crestron-cli scene <target> activate` with optional `--type <lighting|media>` and `--room-id <id>` disambiguation
 Actions: POST /lights/SetState
 on/off: level 65535 / 0
 set: scale 0–100 → 0–65535

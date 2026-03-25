@@ -24,6 +24,7 @@ MVP scope implements:
 - persisted cache in `state.yaml`
 - query commands for lights/rooms/scenes
 - light control commands: `on`, `off`, `set`, `toggle`
+- scene activation command for both lighting and media scenes
 
 Out of scope for MVP:
 - quickactions control
@@ -97,6 +98,12 @@ commands:
     effects:
       - read state or refresh
       - render scene data
+      - include scene type in all output formats
+  scene_activate:
+    syntax: crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]
+    effects:
+      - resolve scene id/name with optional type disambiguation
+      - POST /scenes/recall/{id}
   target_action:
     syntax:
       - crestron-cli <target> on
@@ -132,8 +139,8 @@ lights:
       subtype: <string|null>
   by_name_normalized: {"<normalized name>": <id>}
 scenes:
-  by_id: {"<id>": {id, name, room_id}}
-  by_name_normalized: {"<normalized name>": <id>}
+  by_id: {"<id>": {id, name, room_id, scene_type, status}}
+  by_name_normalized: {"<normalized name>": [<id>, ...]}
 quickactions: {}
 metadata:
   server_firmware: <string|null>

@@ -17,6 +17,8 @@ ERROR_SOURCE_MAP = {
     5001: "Session expired",
     5002: "Authentication failed",
     7003: "Lights operation error",
+    7006: "Scenes operation error",
+    8010: "Media rooms operation error",
 }
 
 
@@ -374,8 +376,38 @@ class CrestronClient:
                 room_id = None
 
             name = self._pick(item, "name", "Name", "sceneName", "SceneName")
-            out.append({"id": scene_id, "name": str(name or f"Scene {scene_id}"), "room_id": room_id})
+            scene_type = self._pick(item, "type", "Type", "sceneType", "SceneType")
+            status = self._pick(item, "status", "Status")
+            out.append(
+                {
+                    "id": scene_id,
+                    "name": str(name or f"Scene {scene_id}"),
+                    "room_id": room_id,
+                    "scene_type": str(scene_type).strip().lower() if scene_type is not None else None,
+                    "status": status,
+                }
+            )
         return out
+
+    def recall_scene(self, scene_id: int) -> Any:
+        self.ensure_login()
+        paths = [f"/scenes/recall/{int(scene_id)}", f"/scenes/Recall/{int(scene_id)}"]
+
+        last_error: Optional[CrestronApiError] = None
+        for path in paths:
+            try:
+                return self._request(
+                    "POST",
+                    path,
+                    include_authkey=True,
+                )
+            except CrestronApiError as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise last_error
+        raise CrestronApiError("scenes operation failed", details="unknown recall failure")
 
     def set_light_state(self, light_id: int, level_raw: int) -> Any:
         self.ensure_login()
