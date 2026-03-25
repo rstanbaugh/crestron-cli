@@ -31,6 +31,8 @@ def default_state(base_url: str = "") -> Dict[str, Any]:
         "rooms": _empty_maps(),
         "lights": _empty_maps(),
         "scenes": _empty_maps(),
+        "speakers": _empty_maps(),
+        "speaker_presets": {"by_room_id": {}},
         "quickactions": {},
         "metadata": {
             "server_firmware": None,
@@ -56,7 +58,7 @@ def load_state(path: Path = STATE_PATH) -> Dict[str, Any]:
     merged = default_state(base_url=str(loaded.get("base_url") or ""))
     merged.update(loaded)
 
-    for key in ["rooms", "lights", "scenes"]:
+    for key in ["rooms", "lights", "scenes", "speakers"]:
         container = merged.get(key)
         if not isinstance(container, dict):
             merged[key] = _empty_maps()
@@ -68,6 +70,12 @@ def load_state(path: Path = STATE_PATH) -> Dict[str, Any]:
 
     if not isinstance(merged.get("metadata"), dict):
         merged["metadata"] = default_state().get("metadata")
+
+    speaker_presets = merged.get("speaker_presets")
+    if not isinstance(speaker_presets, dict):
+        merged["speaker_presets"] = {"by_room_id": {}}
+    elif not isinstance(speaker_presets.get("by_room_id"), dict):
+        speaker_presets["by_room_id"] = {}
 
     return merged
 
@@ -173,6 +181,69 @@ def _build_scene_maps(scenes: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"by_id": by_id, "by_name_normalized": by_name}
 
 
+def _build_speaker_maps(speakers: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_id: Dict[str, Dict[str, Any]] = {}
+    by_name: Dict[str, int] = {}
+
+    for speaker in speakers:
+        speaker_id = speaker.get("id")
+        if speaker_id is None:
+            continue
+        try:
+            speaker_id_int = int(speaker_id)
+        except Exception:
+            continue
+
+        room_id = speaker.get("room_id")
+        try:
+            room_id_int = int(room_id) if room_id is not None else None
+        except Exception:
+            room_id_int = None
+
+        current_volume_percent = speaker.get("current_volume_percent")
+        try:
+            current_volume_percent = int(round(float(current_volume_percent))) if current_volume_percent is not None else None
+        except Exception:
+            current_volume_percent = None
+
+        current_source_id = speaker.get("current_source_id")
+        try:
+            current_source_id = int(current_source_id) if current_source_id is not None else None
+        except Exception:
+            current_source_id = None
+
+        available_sources: List[Dict[str, Any]] = []
+        for src in speaker.get("available_sources") or []:
+            if not isinstance(src, dict):
+                continue
+            src_id = src.get("id")
+            try:
+                src_id_int = int(src_id) if src_id is not None else None
+            except Exception:
+                src_id_int = None
+            available_sources.append({"id": src_id_int, "source_name": str(src.get("source_name") or "")})
+
+        record = {
+            "id": speaker_id_int,
+            "name": str(speaker.get("name") or f"Speaker {speaker_id_int}"),
+            "room_id": room_id_int,
+            "current_volume_percent": current_volume_percent,
+            "current_mute_state": str(speaker.get("current_mute_state") or "").lower() or None,
+            "current_power_state": str(speaker.get("current_power_state") or "").lower() or None,
+            "current_source_id": current_source_id,
+            "available_sources": available_sources,
+            "available_volume_controls": list(speaker.get("available_volume_controls") or []),
+            "available_mute_controls": list(speaker.get("available_mute_controls") or []),
+        }
+        by_id[str(speaker_id_int)] = record
+
+        normalized = normalize_name(record["name"])
+        if normalized:
+            by_name[normalized] = speaker_id_int
+
+    return {"by_id": by_id, "by_name_normalized": by_name}
+
+
 def build_state(
     *,
     base_url: str,
@@ -180,6 +251,7 @@ def build_state(
     rooms: List[Dict[str, Any]],
     lights: List[Dict[str, Any]],
     scenes: List[Dict[str, Any]],
+    speakers: Optional[List[Dict[str, Any]]] = None,
     previous_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     previous_state = previous_state or default_state(base_url=base_url)
@@ -201,6 +273,10 @@ def build_state(
         "rooms": _build_room_maps(rooms),
         "lights": _build_light_maps(lights),
         "scenes": _build_scene_maps(scenes),
+        "speakers": _build_speaker_maps(speakers or []),
+        "speaker_presets": {
+            "by_room_id": dict((((previous_state.get("speaker_presets") or {}).get("by_room_id") or {}))),
+        },
         "quickactions": {},
         "metadata": {
             "server_firmware": metadata.get("server_firmware") if isinstance(metadata, dict) else None,
@@ -213,8 +289,9 @@ def build_state(
 def has_cached_inventory(state: Dict[str, Any]) -> bool:
     lights = ((state.get("lights") or {}).get("by_id") or {})
     scenes = ((state.get("scenes") or {}).get("by_id") or {})
+    speakers = ((state.get("speakers") or {}).get("by_id") or {})
     rooms = ((state.get("rooms") or {}).get("by_id") or {})
-    return bool(lights or scenes or rooms)
+    return bool(lights or scenes or speakers or rooms)
 
 
 def room_name_for_id(state: Dict[str, Any], room_id: Any) -> Optional[str]:
@@ -339,6 +416,178 @@ def list_scenes(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[
         )
     )
     return out
+
+
+def list_speakers(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[str, Any]]:
+    speakers = (state.get("speakers") or {}).get("by_id") or {}
+    out: List[Dict[str, Any]] = []
+    for key, item in speakers.items():
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        row["id"] = int(item.get("id", key))
+        if room_id is not None:
+            try:
+                row_room_id = int(row.get("room_id"))
+            except Exception:
+                continue
+            if row_room_id != room_id:
+                continue
+            row["room_id"] = row_room_id
+        room_name = room_name_for_id(state, row.get("room_id"))
+        if room_name:
+            row["room_name"] = room_name
+        out.append(row)
+    out.sort(
+        key=lambda entry: (
+            0 if entry.get("room_name") else 1,
+            str(entry.get("room_name") or "").lower(),
+            str(entry.get("name") or "").lower(),
+            int(entry.get("id") or 0),
+        )
+    )
+    return out
+
+
+def resolve_speaker_target(state: Dict[str, Any], target: str) -> Tuple[int, Dict[str, Any]]:
+    speakers = (state.get("speakers") or {}).get("by_id") or {}
+    name_map = (state.get("speakers") or {}).get("by_name_normalized") or {}
+    room_name_map = (state.get("rooms") or {}).get("by_name_normalized") or {}
+
+    stripped = target.strip()
+    if stripped.isdigit():
+        key = str(int(stripped))
+        speaker = speakers.get(key)
+        if isinstance(speaker, dict):
+            return int(key), speaker
+        # If the id does not match a speaker id, try room id fallback.
+        room_id = int(key)
+        matches = [entry for entry in speakers.values() if isinstance(entry, dict) and int(entry.get("room_id") or -1) == room_id]
+        if len(matches) == 1:
+            speaker = matches[0]
+            return int(speaker.get("id")), speaker
+        if len(matches) > 1:
+            raise StateError(f"multiple speakers found for room id {room_id}; use speaker id")
+        raise StateError(f"unknown speaker target '{target}'")
+
+    normalized = normalize_name(target)
+    speaker_id = name_map.get(normalized)
+    if speaker_id is not None:
+        speaker = speakers.get(str(speaker_id))
+        if isinstance(speaker, dict):
+            return int(speaker_id), speaker
+
+    room_id = room_name_map.get(normalized)
+    if room_id is not None:
+        matches = [entry for entry in speakers.values() if isinstance(entry, dict) and int(entry.get("room_id") or -1) == int(room_id)]
+        if len(matches) == 1:
+            speaker = matches[0]
+            return int(speaker.get("id")), speaker
+        if len(matches) > 1:
+            raise StateError(f"multiple speakers found for room '{target}'; use speaker id")
+
+    raise StateError(f"unknown speaker target '{target}'")
+
+
+def resolve_speaker_source_target(
+    speaker: Dict[str, Any],
+    source_target: str | None,
+    *,
+    player: str | None = None,
+    preferred_source_id: int | None = None,
+) -> Tuple[int, str]:
+    available_sources = [src for src in (speaker.get("available_sources") or []) if isinstance(src, dict)]
+    if not available_sources:
+        raise StateError("speaker has no available sources")
+
+    if preferred_source_id is not None:
+        for src in available_sources:
+            if int(src.get("id") or -1) == int(preferred_source_id):
+                return int(src.get("id")), str(src.get("source_name") or "")
+
+    normalized_target = normalize_name(source_target) if source_target else ""
+    normalized_player = normalize_name(player) if player else ""
+
+    def _matches_player(src_name: str) -> bool:
+        if not normalized_player:
+            return True
+        return normalize_name(src_name).startswith(f"player {normalized_player}")
+
+    # Explicit source id.
+    if source_target and source_target.strip().isdigit():
+        wanted_id = int(source_target.strip())
+        for src in available_sources:
+            if int(src.get("id") or -1) == wanted_id and _matches_player(str(src.get("source_name") or "")):
+                return int(src.get("id")), str(src.get("source_name") or "")
+        raise StateError(f"unknown source id {wanted_id} for this speaker")
+
+    # Explicit source name.
+    if normalized_target:
+        for src in available_sources:
+            src_name = str(src.get("source_name") or "")
+            if normalize_name(src_name) == normalized_target and _matches_player(src_name):
+                return int(src.get("id")), src_name
+        raise StateError(f"unknown source '{source_target}' for this speaker")
+
+    # Player-only default source pick.
+    if normalized_player:
+        for src in available_sources:
+            src_name = str(src.get("source_name") or "")
+            if _matches_player(src_name):
+                return int(src.get("id")), src_name
+
+    # Fallback first source.
+    first = available_sources[0]
+    return int(first.get("id")), str(first.get("source_name") or "")
+
+
+def update_speaker_state(
+    state: Dict[str, Any],
+    speaker_id: int,
+    *,
+    power_state: str | None = None,
+    mute_state: str | None = None,
+    volume_percent: int | None = None,
+    source_id: int | None = None,
+) -> Dict[str, Any]:
+    speakers = (state.get("speakers") or {}).get("by_id") or {}
+    record = speakers.get(str(speaker_id))
+    if not isinstance(record, dict):
+        return state
+
+    if power_state is not None:
+        record["current_power_state"] = str(power_state).lower()
+    if mute_state is not None:
+        record["current_mute_state"] = str(mute_state).lower()
+    if volume_percent is not None:
+        record["current_volume_percent"] = int(round(float(volume_percent)))
+    if source_id is not None:
+        record["current_source_id"] = int(source_id)
+    return state
+
+
+def get_speaker_player_default(state: Dict[str, Any], room_id: int, player: str) -> int | None:
+    by_room = ((state.get("speaker_presets") or {}).get("by_room_id") or {})
+    room_entry = by_room.get(str(int(room_id)))
+    if not isinstance(room_entry, dict):
+        return None
+    value = room_entry.get(player.upper())
+    try:
+        return int(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def set_speaker_player_default(state: Dict[str, Any], room_id: int, player: str, source_id: int) -> Dict[str, Any]:
+    presets = state.setdefault("speaker_presets", {})
+    by_room = presets.setdefault("by_room_id", {})
+    room_key = str(int(room_id))
+    room_entry = by_room.get(room_key)
+    if not isinstance(room_entry, dict):
+        room_entry = {}
+        by_room[room_key] = room_entry
+    room_entry[player.upper()] = int(source_id)
+    return state
 
 
 def resolve_scene_target(

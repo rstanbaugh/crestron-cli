@@ -409,6 +409,132 @@ class CrestronClient:
             raise last_error
         raise CrestronApiError("scenes operation failed", details="unknown recall failure")
 
+    def get_speakers(self) -> List[Dict[str, Any]]:
+        self.ensure_login()
+        data = self._request("GET", "/mediarooms", include_authkey=True)
+        out: List[Dict[str, Any]] = []
+        for item in self._extract_items(data, ["mediaRooms", "MediaRooms", "mediarooms", "media_rooms"]):
+            speaker_id = self._pick(item, "id", "Id", "mediaRoomId", "MediaRoomId")
+            if speaker_id is None:
+                continue
+            try:
+                speaker_id = int(speaker_id)
+            except Exception:
+                continue
+
+            room_id = self._pick(item, "roomId", "RoomId", "room_id")
+            try:
+                room_id = int(room_id) if room_id is not None else None
+            except Exception:
+                room_id = None
+
+            current_volume = self._pick(item, "currentVolumeLevel", "CurrentVolumeLevel", "volume", "Volume")
+            try:
+                current_volume_percent = int(round(float(current_volume))) if current_volume is not None else None
+            except Exception:
+                current_volume_percent = None
+
+            current_source_id = self._pick(item, "currentSourceId", "CurrentSourceId", "currentProviderId", "CurrentProviderId")
+            try:
+                current_source_id = int(current_source_id) if current_source_id is not None else None
+            except Exception:
+                current_source_id = None
+
+            available_sources_raw = self._pick(item, "availableSources", "AvailableSources")
+            if available_sources_raw is None:
+                providers = self._pick(item, "availableProviders", "AvailableProviders")
+                available_sources_raw = providers if isinstance(providers, list) else []
+
+            available_sources: List[Dict[str, Any]] = []
+            if isinstance(available_sources_raw, list):
+                for index, source in enumerate(available_sources_raw):
+                    if isinstance(source, dict):
+                        src_id = self._pick(source, "id", "Id", "sourceId", "SourceId", "providerId", "ProviderId")
+                        src_name = self._pick(source, "sourceName", "SourceName", "name", "Name", "providerName", "ProviderName")
+                    else:
+                        src_id = index
+                        src_name = str(source)
+                    try:
+                        src_id = int(src_id) if src_id is not None else None
+                    except Exception:
+                        src_id = None
+                    available_sources.append({"id": src_id, "source_name": str(src_name or "")})
+
+            current_mute_state = self._pick(item, "currentMuteState", "CurrentMuteState", "mute", "Mute")
+            current_power_state = self._pick(item, "currentPowerState", "CurrentPowerState", "power", "Power")
+            available_volume_controls = self._pick(item, "availableVolumeControls", "AvailableVolumeControls")
+            available_mute_controls = self._pick(item, "availableMuteControls", "AvailableMuteControls")
+            name = self._pick(item, "name", "Name", "mediaRoomName", "MediaRoomName")
+
+            out.append(
+                {
+                    "id": speaker_id,
+                    "name": str(name or f"Speaker {speaker_id}"),
+                    "room_id": room_id,
+                    "current_volume_percent": current_volume_percent,
+                    "current_mute_state": str(current_mute_state).lower() if current_mute_state is not None else None,
+                    "current_power_state": str(current_power_state).lower() if current_power_state is not None else None,
+                    "current_source_id": current_source_id,
+                    "available_sources": available_sources,
+                    "available_volume_controls": list(available_volume_controls or []),
+                    "available_mute_controls": list(available_mute_controls or []),
+                }
+            )
+        return out
+
+    def _post_mediaroom_path_options(self, paths: List[str]) -> Any:
+        self.ensure_login()
+        last_error: Optional[CrestronApiError] = None
+        for path in paths:
+            try:
+                return self._request("POST", path, include_authkey=True)
+            except CrestronApiError as exc:
+                last_error = exc
+                continue
+        if last_error:
+            raise last_error
+        raise CrestronApiError("media rooms operation failed", details="unknown media room action failure")
+
+    def set_speaker_power(self, speaker_id: int, power_state: str) -> Any:
+        normalized = str(power_state).strip().lower()
+        if normalized not in {"on", "off"}:
+            raise CrestronApiError("media rooms operation failed", details="power state must be on or off")
+        sid = int(speaker_id)
+        return self._post_mediaroom_path_options([
+            f"/mediarooms/{sid}/power/{normalized}",
+            f"/mediaRooms/{sid}/power/{normalized}",
+        ])
+
+    def set_speaker_volume(self, speaker_id: int, level_percent: int) -> Any:
+        bounded = max(0, min(100, int(round(float(level_percent)))))
+        sid = int(speaker_id)
+        return self._post_mediaroom_path_options([
+            f"/mediarooms/{sid}/volume/{bounded}",
+            f"/mediaRooms/{sid}/volume/{bounded}",
+        ])
+
+    def mute_speaker(self, speaker_id: int) -> Any:
+        sid = int(speaker_id)
+        return self._post_mediaroom_path_options([
+            f"/mediarooms/{sid}/mute",
+            f"/mediaRooms/{sid}/mute",
+        ])
+
+    def unmute_speaker(self, speaker_id: int) -> Any:
+        sid = int(speaker_id)
+        return self._post_mediaroom_path_options([
+            f"/mediarooms/{sid}/unmute",
+            f"/mediaRooms/{sid}/unmute",
+        ])
+
+    def select_speaker_source(self, speaker_id: int, source_id: int) -> Any:
+        sid = int(speaker_id)
+        source = int(source_id)
+        return self._post_mediaroom_path_options([
+            f"/mediarooms/{sid}/selectsource/{source}",
+            f"/mediaRooms/{sid}/selectsource/{source}",
+        ])
+
     def set_light_state(self, light_id: int, level_raw: int) -> Any:
         self.ensure_login()
         paths = ["/lights/SetState", "/lights/setstate"]

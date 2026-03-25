@@ -1,7 +1,7 @@
 # crestron-cli Requirements Specification
 
 **Project Name**: crestron-cli  
-**Purpose**: A lightweight Python command-line interface to interact with a Crestron Home server (primarily lighting control at launch).  
+**Purpose**: A lightweight Python command-line interface to interact with a Crestron Home server (lighting, scenes, and media room speaker control).  
 **Usage Contexts**:
 - Standalone terminal tool  
 - Executed as a tool/skill by openclaw agents via `exec "$PY" "$TOOL" "$@"`
@@ -95,17 +95,20 @@ Rooms are first-class and referenced by room_id in other entities.
 by_name_normalized uses lowercase, stripped keys for case-insensitive matching.
 Designed to add new entity types (shades, thermostats, etc.) as new top-level keys without breaking existing code.
 
-## 5. MVP Commands – v0.1 (Lights-focused)
+## 5. MVP Commands – v0.1
 Flat command style:
 ```
 crestron-cli initialize [--force] [--verbose]
 crestron-cli query lights [--refresh] [--json|--yaml]
+crestron-cli query speakers [--refresh] [--json|--yaml]
 crestron-cli query rooms [--refresh] [--json|--yaml]
 crestron-cli query scenes [--refresh] [--json|--yaml]
 crestron-cli <target> on
 crestron-cli <target> off
 crestron-cli <target> set <level>     # level = 0–100 integer
 crestron-cli <target> toggle
+crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>]
+crestron-cli speaker <target> on|off|set <level>|mute|unmute|togglemute|source <id|name> [--player A|B]
 ```
 `<target>`: numeric ID or name (resolved from cache)
 Name resolution: exact match (case-insensitive) via `by_name_normalized`
@@ -120,7 +123,9 @@ Print summary (room/light/scene counts)
 `query lights`: name, id, room name/id, current level (raw + %)
 `query rooms`: name, id
 `query scenes`: name, id, room, scene type
+`query speakers`: room, id, power, mute, volume percent, source id
 Scene activation: `crestron-cli scene <target> activate` with optional `--type <lighting|media>` and `--room-id <id>` disambiguation
+Speaker actions use Media Rooms API (`/mediarooms`) with room-first target resolution and percent-based volume control
 Actions: POST /lights/SetState
 on/off: level 65535 / 0
 set: scale 0–100 → 0–65535

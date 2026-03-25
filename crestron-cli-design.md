@@ -20,11 +20,12 @@ design:
 ## 1. Scope
 MVP scope implements:
 - authentication and session key flow
-- inventory sync (`rooms`, `lights`, `scenes`)
+- inventory sync (`rooms`, `lights`, `scenes`, `speakers`)
 - persisted cache in `state.yaml`
-- query commands for lights/rooms/scenes
+- query commands for lights/rooms/scenes/speakers
 - light control commands: `on`, `off`, `set`, `toggle`
 - scene activation command for both lighting and media scenes
+- speaker control commands: `on`, `off`, `set`, `mute`, `unmute`, `togglemute`, `source`
 
 Out of scope for MVP:
 - quickactions control
@@ -99,11 +100,22 @@ commands:
       - read state or refresh
       - render scene data
       - include scene type in all output formats
+  query_speakers:
+    syntax: crestron-cli query speakers [room=<id>] [--refresh] [--json|--yaml]
+    effects:
+      - read state or refresh
+      - render speaker/media-room state
   scene_activate:
     syntax: crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]
     effects:
       - resolve scene id/name with optional type disambiguation
       - POST /scenes/recall/{id}
+  speaker_action:
+    syntax: crestron-cli speaker <target> {on|off|set|mute|unmute|togglemute|source} [value] [--player <A|B>] [--json|--yaml]
+    effects:
+      - resolve target room/speaker id
+      - POST /mediarooms actions
+      - update cache and optional player source default
   target_action:
     syntax:
       - crestron-cli <target> on
@@ -141,6 +153,11 @@ lights:
 scenes:
   by_id: {"<id>": {id, name, room_id, scene_type, status}}
   by_name_normalized: {"<normalized name>": [<id>, ...]}
+speakers:
+  by_id: {"<id>": {id, name, room_id, current_volume_percent, current_mute_state, current_power_state, current_source_id, available_sources}}
+  by_name_normalized: {"<normalized name>": <id>}
+speaker_presets:
+  by_room_id: {"<room_id>": {"A": <source_id>, "B": <source_id>}}
 quickactions: {}
 metadata:
   server_firmware: <string|null>

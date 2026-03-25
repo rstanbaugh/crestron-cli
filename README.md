@@ -4,9 +4,10 @@ Lightweight CLI for Crestron Home control with cache-backed targeting.
 
 Current MVP supports:
 - initialize and cache inventory (`rooms`, `lights`, `scenes`)
-- query lights/rooms/scenes
+- query lights/rooms/scenes/speakers
 - light actions (`on`, `off`, `set`, `toggle`)
-- scene activation (`scene <target> activate`) for lighting and media scenes
+- scene activation (`scene <target> on|activate`) for lighting and media scenes
+- speaker actions (`speaker <target> on|off|set|mute|unmute|toggle|source`)
 
 ## AI/Agent Usage (Recommended)
 
@@ -24,15 +25,16 @@ Suggested command sequence for agents:
 crestron-cli initialize --yaml
 crestron-cli query rooms --yaml
 crestron-cli query lights --yaml
-crestron-cli "Kitchen Island" set 35 --yaml
+crestron-cli light "Kitchen Island" set 35 --yaml
 ```
 
 Structured response shape (stable contract):
 
-- initialize: `success`, `message`, `data.rooms`, `data.lights`, `data.scenes`, `data.state_path`
-- query lights|rooms|scenes: `success`, `entity`, `count`, `refreshed`, `items[]` (scene items include `scene_type`)
+- initialize: `success`, `message`, `data.rooms`, `data.lights`, `data.scenes`, `data.speakers`, `data.state_path`
+- query lights|rooms|scenes|speakers: `success`, `entity`, `count`, `refreshed`, `items[]` (scene items include `scene_type`)
 - actions (on/off/set/toggle): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.level_raw`, `data.level_percent`
 - scene action (activate): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.scene_type`, `data.room_id`
+- speaker action: `success`, `message`, `data.id`, `data.name`, `data.action`, `data.room_id`, optional `data.level_percent`, `data.source_id`, `data.source_name`, `data.player`
 - errors: `success: false`, `error`, optional `details`
 
 ## Runtime model
@@ -93,14 +95,12 @@ exec "$PY" "$TOOL" "$@"
 
 ```text
 crestron-cli initialize [--force] [--verbose] [--json|--yaml]
-crestron-cli query [lights|scenes] [room=<id>] [--refresh] [--raw|--json|--yaml]
-crestron-cli query room=<id> [lights|scenes] [--refresh] [--raw|--json|--yaml]
+crestron-cli query [lights|scenes|speakers] [room=<id>] [--refresh] [--raw|--json|--yaml]
+crestron-cli query room=<id> [lights|scenes|speakers] [--refresh] [--raw|--json|--yaml]
 crestron-cli query rooms [--refresh] [--raw|--json|--yaml]
-crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]
-crestron-cli <target> on [--json|--yaml]
-crestron-cli <target> off [--json|--yaml]
-crestron-cli <target> set <level> [--json|--yaml]
-crestron-cli <target> toggle [--json|--yaml]
+crestron-cli scene <target> {on|activate} [--type <lighting|media>] [--room-id <id>] [--json|--yaml]
+crestron-cli speaker <target> {on|off|set|mute|unmute|toggle|source} [value] [--player <A|B>] [--json|--yaml]
+crestron-cli light <target> {on|off|set|toggle} [value] [--json|--yaml]
 ```
 
 Examples:
@@ -112,23 +112,31 @@ crestron-cli query lights room=10
 crestron-cli query room=10 lights
 crestron-cli query scenes room=10
 crestron-cli query room=10 scenes --raw
-crestron-cli scene "Happy Hour" activate --type media --yaml
+crestron-cli query speakers --yaml
+crestron-cli query room=10 speakers --raw
+crestron-cli light "Kitchen Island" set 35 --yaml
+crestron-cli light id=1135 toggle --yaml
+crestron-cli scene "Happy Hour" on --type media --yaml
 crestron-cli scene id=52138 activate --yaml
+crestron-cli speaker "Kitchen" on --player A --yaml
+crestron-cli speaker "Kitchen" set 35 --yaml
+crestron-cli speaker "Kitchen" toggle --yaml
+crestron-cli speaker "Kitchen" source "Player B Spotify" --player B --yaml
 ```
 
 ### Target syntax
 
 Supported target formats:
 - numeric id: `1135`
-- id token: `light=1135` or `id=1135`
+- id token: `id=1135`
 - cached name: `"Billiards Table"`
 
 Examples:
 
 ```bash
-crestron-cli light=1135 toggle --yaml
-crestron-cli light=1135 set 50 --yaml
-crestron-cli "Billiards Table" off --yaml
+crestron-cli light id=1135 toggle --yaml
+crestron-cli light id=1135 set 50 --yaml
+crestron-cli light "Billiards Table" off --yaml
 ```
 
 ## State cache

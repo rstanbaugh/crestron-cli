@@ -9,15 +9,21 @@ from .config import ConfigError, load_config
 from .state import (
     StateError,
     build_state,
+    get_speaker_player_default,
     has_cached_inventory,
     list_lights,
     list_rooms,
     list_scenes,
+    list_speakers,
     load_state,
     resolve_light_target,
     resolve_scene_target,
+    resolve_speaker_source_target,
+    resolve_speaker_target,
     save_state,
+    set_speaker_player_default,
     update_light_level,
+    update_speaker_state,
 )
 from .utils import default_output_format, emit_payload, percent_to_raw, render_csv, render_table
 
@@ -41,6 +47,7 @@ def _refresh_inventory(client: CrestronClient, current_state: Dict[str, Any]) ->
     rooms = client.get_rooms()
     lights = client.get_lights()
     scenes = client.get_scenes()
+    speakers = client.get_speakers()
 
     refreshed_state = build_state(
         base_url=client.config.base_url,
@@ -48,6 +55,7 @@ def _refresh_inventory(client: CrestronClient, current_state: Dict[str, Any]) ->
         rooms=rooms,
         lights=lights,
         scenes=scenes,
+        speakers=speakers,
         previous_state=current_state,
     )
     save_state(refreshed_state)
@@ -91,9 +99,9 @@ def _parse_query_selector(selector: str | None, query_filter: str | None) -> Tup
 
     for token in tokens:
         normalized = token.lower()
-        if normalized in {"lights", "rooms", "scenes"}:
+        if normalized in {"lights", "rooms", "scenes", "speakers"}:
             if entity is not None:
-                return "", None, "multiple entities provided; use only one of lights, rooms, or scenes"
+                return "", None, "multiple entities provided; use only one of lights, rooms, scenes, or speakers"
             entity = normalized
             continue
 
@@ -107,8 +115,8 @@ def _parse_query_selector(selector: str | None, query_filter: str | None) -> Tup
     if entity is None:
         entity = "lights"
 
-    if room_id is not None and entity not in {"lights", "scenes"}:
-        return "", None, "room filter is only supported for lights and scenes queries"
+    if room_id is not None and entity not in {"lights", "scenes", "speakers"}:
+        return "", None, "room filter is only supported for lights, scenes, and speakers queries"
 
     return entity, room_id, None
 
@@ -159,6 +167,25 @@ def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | N
         headers = ["Name", "Room ID"]
         rows = [[row.get("name"), row.get("id")] for row in items]
         print(f"Rooms ({len(items)})\n{render_table(headers, rows)}")
+        return
+
+    if entity == "speakers":
+        headers = ["Room", "Room ID", "Name", "Speaker ID", "Power", "Mute", "Volume %", "Source"]
+        rows = [
+            [
+                row.get("room_name"),
+                row.get("room_id"),
+                row.get("name"),
+                row.get("id"),
+                row.get("current_power_state"),
+                row.get("current_mute_state"),
+                row.get("current_volume_percent"),
+                row.get("current_source_id"),
+            ]
+            for row in items
+        ]
+        title = f"Speakers ({len(items)})" if room_id is None else f"Speakers in room {room_id} ({len(items)})"
+        print(f"{title}\n{render_table(headers, rows)}")
         return
 
     headers = ["Room", "Room ID", "Name", "Scene Type", "Scene ID"]
@@ -214,6 +241,24 @@ def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | Non
         print(render_csv(headers, rows))
         return
 
+    if entity == "speakers":
+        headers = ["Room", "Room ID", "Name", "Speaker ID", "Power", "Mute", "Volume %", "Source"]
+        rows = [
+            [
+                row.get("room_name"),
+                row.get("room_id"),
+                row.get("name"),
+                row.get("id"),
+                row.get("current_power_state"),
+                row.get("current_mute_state"),
+                row.get("current_volume_percent"),
+                row.get("current_source_id"),
+            ]
+            for row in items
+        ]
+        print(render_csv(headers, rows))
+        return
+
     headers = ["Room", "Room ID", "Name", "Scene Type", "Scene ID"]
     rows = [
         [
@@ -244,6 +289,20 @@ def _ordered_query_items(entity: str, items: List[Dict[str, Any]]) -> List[Dict[
         preferred = ["room_name", "room_id", "name", "id", "current_level", "percent", "subtype"]
     elif entity == "rooms":
         preferred = ["name", "id"]
+    elif entity == "speakers":
+        preferred = [
+            "room_name",
+            "room_id",
+            "name",
+            "id",
+            "current_power_state",
+            "current_mute_state",
+            "current_volume_percent",
+            "current_source_id",
+            "available_sources",
+            "available_volume_controls",
+            "available_mute_controls",
+        ]
     else:
         preferred = ["room_name", "room_id", "name", "scene_type", "id", "status"]
 
@@ -273,14 +332,16 @@ def _initialize_command(argv: List[str]) -> int:
         rooms_count = len(((state.get("rooms") or {}).get("by_id") or {}))
         lights_count = len(((state.get("lights") or {}).get("by_id") or {}))
         scenes_count = len(((state.get("scenes") or {}).get("by_id") or {}))
+        speakers_count = len(((state.get("speakers") or {}).get("by_id") or {}))
 
         payload = {
             "success": True,
-            "message": f"Initialized cache: {rooms_count} rooms, {lights_count} lights, {scenes_count} scenes",
+            "message": f"Initialized cache: {rooms_count} rooms, {lights_count} lights, {scenes_count} scenes, {speakers_count} speakers",
             "data": {
                 "rooms": rooms_count,
                 "lights": lights_count,
                 "scenes": scenes_count,
+                "speakers": speakers_count,
                 "state_path": "~/.openclaw/tools/crestron/state.yaml",
             },
         }
@@ -298,7 +359,7 @@ def _initialize_command(argv: List[str]) -> int:
 
 def _query_command(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="crestron-cli query", add_help=True)
-    parser.add_argument("token1", nargs="?", help="Entity or filter: lights|rooms|scenes or room=<id>")
+    parser.add_argument("token1", nargs="?", help="Entity or filter: lights|rooms|scenes|speakers or room=<id>")
     parser.add_argument("token2", nargs="?", help="Optional second token in either order")
     parser.add_argument("--refresh", action="store_true", help="Force refresh before query")
     parser.add_argument("--raw", action="store_true", help="Emit comma-separated values (CSV)")
@@ -366,6 +427,34 @@ def _query_command(argv: List[str]) -> int:
                     "entity": "rooms",
                     "count": len(items),
                     "refreshed": refreshed,
+                    "items": items,
+                },
+                fmt,
+            )
+            return 0
+
+        if entity == "speakers":
+            items = list_speakers(state, room_id=room_id)
+            if not items and not args.refresh:
+                state = _refresh_inventory(client, state)
+                refreshed = True
+                items = list_speakers(state, room_id=room_id)
+            if fmt == "human":
+                _emit_query_table(entity, items, room_id)
+                return 0
+            if fmt == "raw":
+                _emit_query_raw(entity, items, room_id)
+                return 0
+
+            items = _ordered_query_items(entity, items)
+
+            emit_payload(
+                {
+                    "success": True,
+                    "entity": "speakers",
+                    "count": len(items),
+                    "refreshed": refreshed,
+                    "room_id": room_id,
                     "items": items,
                 },
                 fmt,
@@ -450,11 +539,22 @@ def _normalize_scene_target_token(target: str) -> str:
     return token
 
 
+def _normalize_speaker_target_token(target: str) -> str:
+    token = target.strip()
+    lowered = token.lower()
+    for prefix in ("speaker=", "id=", "speaker:", "id:", "room=", "room:"):
+        if lowered.startswith(prefix):
+            value = token[len(prefix):].strip()
+            if value:
+                return value
+    return token
+
+
 def _action_command(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(
-        prog="crestron-cli <target>",
+        prog="crestron-cli light <target>",
         add_help=True,
-        usage="crestron-cli <target> {on|off|set|toggle} [level] [--json|--yaml]",
+        usage="crestron-cli light <target> {on|off|set|toggle} [level] [--json|--yaml]",
     )
     parser.add_argument("target")
     parser.add_argument("action", choices=["on", "off", "set", "toggle"])
@@ -541,10 +641,10 @@ def _scene_command(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="crestron-cli scene",
         add_help=True,
-        usage="crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
+        usage="crestron-cli scene <target> {on|activate} [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
     )
     parser.add_argument("target")
-    parser.add_argument("action", choices=["activate"])
+    parser.add_argument("action", choices=["on", "activate"])
     parser.add_argument("--type", choices=["lighting", "media"], dest="scene_type", help="Optional scene type")
     parser.add_argument("--room-id", type=int, help="Optional room id for disambiguation")
     parser.add_argument("--json", action="store_true", help="Emit structured JSON")
@@ -588,7 +688,7 @@ def _scene_command(argv: List[str]) -> int:
             "data": {
                 "id": scene_id,
                 "name": scene_name,
-                "action": "activate",
+                "action": "on" if args.action == "on" else "activate",
                 "scene_type": scene.get("scene_type"),
                 "room_id": scene.get("room_id"),
             },
@@ -602,6 +702,151 @@ def _scene_command(argv: List[str]) -> int:
         return _emit_error("scene action failed", fmt=fmt, details=str(exc))
 
 
+def _speaker_command(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="crestron-cli speaker",
+        add_help=True,
+        usage="crestron-cli speaker <target> {on|off|set|mute|unmute|toggle|source} [value] [--player <A|B>] [--json|--yaml]",
+    )
+    parser.add_argument("target")
+    parser.add_argument("action", choices=["on", "off", "set", "mute", "unmute", "toggle", "source"])
+    parser.add_argument("value", nargs="?")
+    parser.add_argument("--player", choices=["A", "B", "a", "b"], help="Optional player selector")
+    parser.add_argument("--json", action="store_true", help="Emit structured JSON")
+    parser.add_argument("--yaml", action="store_true", help="Emit structured YAML")
+    args = parser.parse_args(argv)
+
+    if args.json and args.yaml:
+        return _emit_error("choose only one of --json or --yaml")
+
+    fmt = default_output_format(args.json, args.yaml)
+    action = args.action
+    player = args.player.upper() if args.player else None
+
+    if action == "set":
+        if args.value is None:
+            return _emit_error("set requires level argument (0-100)", fmt=fmt)
+        try:
+            level_percent = int(args.value)
+        except Exception:
+            return _emit_error("level must be an integer between 0 and 100", fmt=fmt)
+        if level_percent < 0 or level_percent > 100:
+            return _emit_error("level must be between 0 and 100", fmt=fmt)
+    else:
+        level_percent = None
+
+    if action == "source" and args.value is None:
+        return _emit_error("source action requires a source id or name", fmt=fmt)
+
+    if action not in {"set", "source"} and args.value is not None:
+        return _emit_error("unexpected value argument", fmt=fmt)
+
+    try:
+        config = load_config()
+        client = CrestronClient(config)
+        state = load_state()
+        if not has_cached_inventory(state):
+            state = _refresh_inventory(client, state)
+        if not ((state.get("speakers") or {}).get("by_id") or {}):
+            state = _refresh_inventory(client, state)
+
+        target_token = _normalize_speaker_target_token(args.target)
+        speaker_id, speaker = resolve_speaker_target(state, target_token)
+        room_id = speaker.get("room_id")
+        current_mute_state = str(speaker.get("current_mute_state") or "").lower()
+
+        selected_source_id: int | None = None
+        selected_source_name: str | None = None
+
+        if action == "on":
+            if player is not None:
+                preset_source = get_speaker_player_default(state, int(room_id), player) if room_id is not None else None
+                selected_source_id, selected_source_name = resolve_speaker_source_target(
+                    speaker,
+                    None,
+                    player=player,
+                    preferred_source_id=preset_source,
+                )
+                client.select_speaker_source(speaker_id, selected_source_id)
+                if room_id is not None:
+                    state = set_speaker_player_default(state, int(room_id), player, selected_source_id)
+                state = update_speaker_state(state, speaker_id, source_id=selected_source_id)
+            client.set_speaker_power(speaker_id, "on")
+            state = update_speaker_state(state, speaker_id, power_state="on")
+            action_desc = "turned on"
+        elif action == "off":
+            client.set_speaker_power(speaker_id, "off")
+            state = update_speaker_state(state, speaker_id, power_state="off")
+            action_desc = "turned off"
+        elif action == "set":
+            assert level_percent is not None
+            client.set_speaker_volume(speaker_id, level_percent)
+            state = update_speaker_state(state, speaker_id, volume_percent=level_percent)
+            action_desc = f"set to {level_percent}%"
+        elif action == "mute":
+            client.mute_speaker(speaker_id)
+            state = update_speaker_state(state, speaker_id, mute_state="muted")
+            action_desc = "muted"
+        elif action == "unmute":
+            client.unmute_speaker(speaker_id)
+            state = update_speaker_state(state, speaker_id, mute_state="unmuted")
+            action_desc = "unmuted"
+        elif action == "toggle":
+            if current_mute_state == "muted":
+                client.unmute_speaker(speaker_id)
+                state = update_speaker_state(state, speaker_id, mute_state="unmuted")
+                action_desc = "unmuted"
+            else:
+                client.mute_speaker(speaker_id)
+                state = update_speaker_state(state, speaker_id, mute_state="muted")
+                action_desc = "muted"
+        else:
+            assert action == "source"
+            selected_source_id, selected_source_name = resolve_speaker_source_target(
+                speaker,
+                args.value,
+                player=player,
+            )
+            client.select_speaker_source(speaker_id, selected_source_id)
+            state = update_speaker_state(state, speaker_id, source_id=selected_source_id)
+            if player is not None and room_id is not None:
+                state = set_speaker_player_default(state, int(room_id), player, selected_source_id)
+            action_desc = f"source set to {selected_source_name or selected_source_id}"
+
+        save_state(state)
+
+        speaker_name = str(speaker.get("name") or f"Speaker {speaker_id}")
+        payload_data: Dict[str, Any] = {
+            "id": speaker_id,
+            "name": speaker_name,
+            "action": action,
+            "room_id": room_id,
+        }
+        if level_percent is not None:
+            payload_data["level_percent"] = level_percent
+        if selected_source_id is not None:
+            payload_data["source_id"] = selected_source_id
+        if selected_source_name:
+            payload_data["source_name"] = selected_source_name
+        if player is not None:
+            payload_data["player"] = player
+
+        emit_payload(
+            {
+                "success": True,
+                "message": f"{speaker_name} {action_desc}",
+                "data": payload_data,
+            },
+            fmt,
+        )
+        return 0
+
+    except ConfigError as exc:
+        return _emit_error(str(exc), fmt=fmt)
+    except (CrestronApiError, StateError, RuntimeError) as exc:
+        return _emit_error("speaker action failed", fmt=fmt, details=str(exc))
+
+
 def _print_root_help() -> None:
     text = "\n".join(
         [
@@ -609,14 +854,12 @@ def _print_root_help() -> None:
             "",
             "Usage:",
             "  crestron-cli initialize [--force] [--verbose] [--json|--yaml]",
-            "  crestron-cli query [lights|scenes] [room=<id>] [--refresh] [--raw|--json|--yaml]",
-            "  crestron-cli query room=<id> [lights|scenes] [--refresh] [--raw|--json|--yaml]",
+            "  crestron-cli query [lights|scenes|speakers] [room=<id>] [--refresh] [--raw|--json|--yaml]",
+            "  crestron-cli query room=<id> [lights|scenes|speakers] [--refresh] [--raw|--json|--yaml]",
             "  crestron-cli query rooms [--refresh] [--raw|--json|--yaml]",
-            "  crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
-            "  crestron-cli <target> on [--json|--yaml]",
-            "  crestron-cli <target> off [--json|--yaml]",
-            "  crestron-cli <target> set <level> [--json|--yaml]",
-            "  crestron-cli <target> toggle [--json|--yaml]",
+            "  crestron-cli scene <target> {on|activate} [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
+            "  crestron-cli speaker <target> {on|off|set|mute|unmute|toggle|source} [value] [--player <A|B>] [--json|--yaml]",
+            "  crestron-cli light <target> {on|off|set|toggle} [value] [--json|--yaml]",
             "",
             "Environment:",
             "  CRESTRON_HOME_IP (required)",
@@ -641,8 +884,12 @@ def main(argv: List[str] | None = None) -> int:
         return _query_command(argv[1:])
     if command == "scene":
         return _scene_command(argv[1:])
+    if command == "speaker":
+        return _speaker_command(argv[1:])
+    if command == "light":
+        return _action_command(argv[1:])
 
-    return _action_command(argv)
+    return _emit_error(f"unknown command '{command}'", details="run 'crestron-cli --help' for usage")
 
 
 def cli() -> None:
