@@ -519,6 +519,14 @@ class CrestronClient:
             f"/mediaRooms/{sid}/volume/{bounded}",
         ])
 
+    def set_speaker_volume_raw(self, speaker_id: int, level_raw: int) -> Any:
+        bounded = max(0, min(65535, int(round(float(level_raw)))))
+        sid = int(speaker_id)
+        return self._post_mediaroom_path_options([
+            f"/mediarooms/{sid}/volume/{bounded}",
+            f"/mediaRooms/{sid}/volume/{bounded}",
+        ])
+
     def mute_speaker(self, speaker_id: int) -> Any:
         sid = int(speaker_id)
         return self._post_mediaroom_path_options([

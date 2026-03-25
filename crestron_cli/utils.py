@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from decimal import Decimal, ROUND_HALF_UP
 import io
 import json
 import os
@@ -19,9 +20,10 @@ def normalize_name(name: Any) -> str:
     return " ".join(str(name).strip().lower().split())
 
 
-def percent_to_raw(level_percent: int) -> int:
-    bounded = max(0, min(100, int(level_percent)))
-    return int(round((bounded / 100.0) * 65535))
+def percent_to_raw(level_percent: int | float) -> int:
+    bounded = max(0.0, min(100.0, float(level_percent)))
+    scaled = (Decimal(str(bounded)) * Decimal("65535")) / Decimal("100")
+    return int(scaled.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def raw_to_percent(level_raw: Any) -> float | None:
@@ -30,7 +32,9 @@ def raw_to_percent(level_raw: Any) -> float | None:
     except Exception:
         return None
     bounded = max(0.0, min(65535.0, value))
-    return round((bounded / 65535.0) * 100.0, 1)
+    scaled = (Decimal(str(bounded)) * Decimal("100")) / Decimal("65535")
+    rounded = scaled.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return float(rounded)
 
 
 def utc_now_iso() -> str:

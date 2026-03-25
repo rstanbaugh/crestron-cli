@@ -1318,6 +1318,29 @@ def _audio_command(argv: List[str]) -> int:
             observed_from_refresh = False
             save_state(state)
 
+        # Some controllers treat /volume/{value} as raw 0..65535. If percent write
+        # did not stick, retry once using raw scaling and refresh again.
+        if level_percent is not None and observed_from_refresh:
+            current_after_write = ((state.get("speakers") or {}).get("by_id") or {}).get(str(speaker_id)) or {}
+            observed_level = current_after_write.get("current_volume_percent")
+            observed_level_percent: int | None
+            try:
+                observed_level_percent = int(round(float(observed_level))) if observed_level is not None else None
+            except Exception:
+                observed_level_percent = None
+
+            power_after_write = str(current_after_write.get("current_power_state") or "").lower()
+            if (
+                observed_level_percent is not None
+                and power_after_write == "on"
+                and abs(observed_level_percent - level_percent) >= 5
+            ):
+                try:
+                    client.set_speaker_volume_raw(speaker_id, percent_to_raw(level_percent))
+                    state = _refresh_inventory(client, state)
+                except Exception:
+                    pass
+
         speaker_name = str(speaker.get("name") or f"Speaker {speaker_id}")
         current_speaker = ((state.get("speakers") or {}).get("by_id") or {}).get(str(speaker_id)) or {}
         current_source_id = current_speaker.get("current_source_id")
@@ -1802,8 +1825,10 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
                 if exc.status_code != 409:
                     raise
 
+        requested_volume_raw: int | None = None
         if level_percent is not None:
-            client.set_speaker_volume(speaker_id, level_percent)
+            requested_volume_raw = percent_to_raw(level_percent)
+            client.set_speaker_volume_raw(speaker_id, requested_volume_raw)
 
         if mute_flag:
             client.mute_speaker(speaker_id)
@@ -1821,6 +1846,65 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
             save_state(state)
 
         current = ((state.get("speakers") or {}).get("by_id") or {}).get(str(speaker_id)) or {}
+        observed_level_percent: int | None = None
+        try:
+            observed_level_percent = (
+                int(round(float(current.get("current_volume_percent"))))
+                if current.get("current_volume_percent") is not None
+                else None
+            )
+        except Exception:
+            observed_level_percent = None
+
+        # Some controllers interpret /volume/{value} as percent; others as raw.
+        # We write raw first, then retry percent once if readback still mismatches.
+        if (
+            level_percent is not None
+            and observed_from_refresh
+            and str(current.get("current_power_state") or "").lower() == "on"
+            and observed_level_percent is not None
+            and requested_volume_raw is not None
+            and observed_level_percent < level_percent
+            and requested_volume_raw < 65535
+        ):
+            try:
+                client.set_speaker_volume_raw(speaker_id, requested_volume_raw + 1)
+                state = _refresh_inventory(client, state)
+                current = ((state.get("speakers") or {}).get("by_id") or {}).get(str(speaker_id)) or {}
+                try:
+                    observed_level_percent = (
+                        int(round(float(current.get("current_volume_percent"))))
+                        if current.get("current_volume_percent") is not None
+                        else None
+                    )
+                except Exception:
+                    observed_level_percent = None
+            except Exception:
+                pass
+
+        if (
+            level_percent is not None
+            and observed_from_refresh
+            and str(current.get("current_power_state") or "").lower() == "on"
+            and (observed_level_percent is None or abs(observed_level_percent - level_percent) >= 5)
+        ):
+            try:
+                client.set_speaker_volume(speaker_id, level_percent)
+                state = _refresh_inventory(client, state)
+                current = ((state.get("speakers") or {}).get("by_id") or {}).get(str(speaker_id)) or {}
+                try:
+                    observed_level_percent = (
+                        int(round(float(current.get("current_volume_percent"))))
+                        if current.get("current_volume_percent") is not None
+                        else None
+                    )
+                except Exception:
+                    observed_level_percent = None
+            except Exception:
+                pass
+
+        reported_level_percent = observed_level_percent if observed_level_percent is not None else level_percent
+
         current_source_id = current.get("current_source_id")
         current_source_name: str | None = None
         current_player = "unknown"
@@ -1845,7 +1929,7 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
                     "id": speaker_id,
                     "name": speaker.get("name") or f"Audio {speaker_id}",
                     "current_state": str(current.get("current_power_state") or "unknown"),
-                    "level_percent": current.get("current_volume_percent"),
+                    "level_percent": reported_level_percent,
                     "mute": str(current.get("current_mute_state") or "unknown"),
                     "player": current_player,
                     "source_id": current_source_id,

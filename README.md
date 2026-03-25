@@ -155,7 +155,7 @@ Supported target formats:
 - numeric id: `1135`
 - cached name: `"Billiards Table"`
 
-If multiple lights share the same name, name targeting is ambiguous and the CLI will require `id=...`.
+If multiple lights share the same name, name targeting is ambiguous and the CLI will require a numeric id target.
 
 Examples:
 
