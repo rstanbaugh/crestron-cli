@@ -1560,16 +1560,24 @@ def _print_target_help(kind: str, target: str | None = None) -> None:
         print(
             "\n".join(
                 [
-                    "crestron-cli audio <player-source-assignment>",
+                    "crestron-cli audio",
                     "",
-                    "Usage:",
+                    "Player source assignment:",
                     "  crestron-cli audio A=<source-id|source-name|partial-name> [--json|--yaml]",
                     "  crestron-cli audio B=<source-id|source-name|partial-name> [--json|--yaml]",
                     "",
+                    "Room routing/control:",
+                    "  crestron-cli audio=<id|name> [on|off|toggle] [level=<0..100>] [mute|unmute] [player=<A|B>] [--json|--yaml]",
+                    "",
+                    "Discovery:",
+                    "  crestron-cli query audio source",
+                    "  crestron-cli query audio player",
+                    "",
                     "Notes:",
-                    "  - Source name matching is case-insensitive",
-                    "  - Partial source name matching is supported",
-                    "  - If multiple matches exist, first deterministic match is selected",
+                    "  - Name matching is case-insensitive",
+                    "  - Partial matching is supported",
+                    "  - Matches are player-scoped and use the same dataset as 'query audio source'",
+                    "  - Ambiguous source matches return an error; use source-id for deterministic control",
                 ]
             )
         )
@@ -1885,11 +1893,20 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
                 preferred_source_id = int(default_entry.get("source_id")) if default_entry.get("source_id") is not None else None
             except Exception:
                 preferred_source_id = None
+
+            # Explicit player requests should follow the current global player
+            # mapping; room presets are only used for implicit routing.
+            effective_preferred_source_id = (
+                preferred_source_id
+                if requested_player is not None
+                else (room_preferred_source_id if room_preferred_source_id is not None else preferred_source_id)
+            )
+
             selected_source_id, selected_source_name = resolve_speaker_source_target(
                 speaker,
                 None,
                 player=effective_player,
-                preferred_source_id=room_preferred_source_id if room_preferred_source_id is not None else preferred_source_id,
+                preferred_source_id=effective_preferred_source_id,
             )
 
         if on_flag:
