@@ -20,7 +20,7 @@ Audio/source defaults:
 - use `crestron-cli query audio` to inspect room audio state (including current player)
 - use `crestron-cli query audio player` to inspect current Player A/B sources
 - use `crestron-cli query audio source` to list available sources and IDs
-- use `crestron-cli audio <A|B>=<source-id|source-name>` to set global player source
+- use `crestron-cli audio <A|B>=<source-id|source-name>` to set global player source (name matching is case-insensitive and supports partial text)
 
 ## AI/Agent Usage (Recommended)
 

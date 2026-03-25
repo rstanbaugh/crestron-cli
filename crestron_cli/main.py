@@ -184,15 +184,19 @@ def _print_query_help(entity: str | None, audio_view: str | None = None) -> None
                 "crestron-cli query audio",
                 "",
                 "Usage:",
-                "  crestron-cli query audio [room=<id|name>] [--refresh] [--raw|--json|--yaml]",
+                "  crestron-cli query audio [<view>] [room=<id|name>] [--refresh] [--raw|--json|--yaml]",
                 "  crestron-cli query audio player [--refresh] [--raw|--json|--yaml]",
                 "  crestron-cli query audio source [room=<id|name>] [--refresh] [--raw|--json|--yaml]",
                 "  crestron-cli query room=<id|name> audio [player|source] [--refresh] [--raw|--json|--yaml]",
                 "",
                 "Views:",
-                "  audio         Room audio status (name, power, mute, volume %, player)",
+                "  status (default)  Room audio status (name, power, mute, volume %, player)",
                 "  audio player  Global Player A/B source mapping",
                 "  audio source  Available source names and source IDs",
+                "",
+                "Options:",
+                "  --refresh  Bypass cache and pull fresh inventory from controller before query",
+                "  Output mode: blank (table) | --raw (CSV) | --json | --yaml",
                 view_hint,
             ]
         ).rstrip()
@@ -410,8 +414,8 @@ def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | N
 
     if entity == "audio":
         if items and "player" in items[0] and "source" in items[0]:
-            headers = ["Player", "Source"]
-            rows = [[row.get("player"), row.get("source")] for row in items]
+            headers = ["Player", "Source", "Source ID"]
+            rows = [[row.get("player"), row.get("source"), row.get("source_id")] for row in items]
             print(f"Audio players ({len(items)})\n{render_table(headers, rows)}")
             return
 
@@ -492,8 +496,8 @@ def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | Non
 
     if entity == "audio":
         if items and "player" in items[0] and "source" in items[0]:
-            headers = ["Player", "Source"]
-            rows = [[row.get("player"), row.get("source")] for row in items]
+            headers = ["Player", "Source", "Source ID"]
+            rows = [[row.get("player"), row.get("source"), row.get("source_id")] for row in items]
             print(render_csv(headers, rows))
             return
 
@@ -1076,10 +1080,17 @@ def _audio_command(argv: List[str]) -> int:
                         break
             else:
                 wanted_name = source_target.strip().lower()
+                # Prefer exact name match first, then fall back to partial contains match.
                 for source in sources:
                     if str(source.get("source_name") or "").strip().lower() == wanted_name:
                         selected = source
                         break
+                if selected is None:
+                    for source in sources:
+                        source_name = str(source.get("source_name") or "").strip().lower()
+                        if wanted_name in source_name:
+                            selected = source
+                            break
 
             if selected is None:
                 return _emit_error("audio default update failed", fmt=fmt, details=f"unknown source '{source_target}'")
