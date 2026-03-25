@@ -400,6 +400,7 @@ class CrestronClient:
                 return self._request(
                     "POST",
                     path,
+                    json_body={},
                     include_authkey=True,
                 )
             except CrestronApiError as exc:

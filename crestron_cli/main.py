@@ -1394,6 +1394,577 @@ def _speaker_command(argv: List[str]) -> int:
     return _audio_command(argv)
 
 
+def _extract_output_mode(tokens: List[str]) -> Tuple[List[str], str, str | None]:
+    remaining: List[str] = []
+    json_flag = False
+    yaml_flag = False
+    for token in tokens:
+        lowered = token.lower()
+        if lowered == "--json":
+            json_flag = True
+            continue
+        if lowered == "--yaml":
+            yaml_flag = True
+            continue
+        if token.startswith("--"):
+            return [], "human", f"unknown option '{token}'"
+        remaining.append(token)
+
+    if json_flag and yaml_flag:
+        return [], "human", "choose only one of --json or --yaml"
+    return remaining, default_output_format(json_flag, yaml_flag), None
+
+
+def _parse_key_value(tokens: List[str], key: str) -> Tuple[List[str], str | None, str | None]:
+    key_lower = key.lower()
+    out: List[str] = []
+    value: str | None = None
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        lowered = token.lower()
+        if lowered.startswith(f"{key_lower}="):
+            candidate = token.split("=", 1)[1].strip()
+            if not candidate:
+                return [], None, f"{key} requires a value"
+            if value is not None and value.lower() != candidate.lower():
+                return [], None, f"conflicting {key} values provided"
+            value = candidate
+        elif lowered == key_lower:
+            if idx + 1 >= len(tokens):
+                return [], None, f"{key} requires a value"
+            candidate = tokens[idx + 1].strip()
+            if not candidate:
+                return [], None, f"{key} requires a value"
+            if value is not None and value.lower() != candidate.lower():
+                return [], None, f"conflicting {key} values provided"
+            value = candidate
+            idx += 1
+        else:
+            out.append(token)
+        idx += 1
+    return out, value, None
+
+
+def _print_target_help(kind: str, target: str | None = None) -> None:
+    if kind == "light":
+        print(
+            "\n".join(
+                [
+                    f"crestron-cli light={target or '<id|name>'}",
+                    "",
+                    "Usage:",
+                    "  crestron-cli light=<id|name> on|off|toggle|level=<0..100> [--json|--yaml]",
+                    "",
+                    "Notes:",
+                    "  - Action tokens are case-insensitive",
+                    "  - level=0..100 is integer percent",
+                    "  - If level is provided while off, load turns on at that level",
+                ]
+            )
+        )
+        return
+
+    if kind == "audio-target":
+        print(
+            "\n".join(
+                [
+                    f"crestron-cli audio={target or '<id|name>'}",
+                    "",
+                    "Usage:",
+                    "  crestron-cli audio=<id|name> [on|off|toggle] [level=<0..100>] [mute|unmute] [player=<A|B>] [--json|--yaml]",
+                    "",
+                    "Notes:",
+                    "  - Action tokens are case-insensitive",
+                    "  - Conflicting tokens (on+off, mute+unmute, etc.) raise an error",
+                    "  - If level is provided while off, route turns on at that level",
+                    "  - If powering on and player is omitted, defaults to player A",
+                ]
+            )
+        )
+        return
+
+    if kind == "audio-global":
+        print(
+            "\n".join(
+                [
+                    "crestron-cli audio <player-source-assignment>",
+                    "",
+                    "Usage:",
+                    "  crestron-cli audio A=<source-id|source-name|partial-name> [--json|--yaml]",
+                    "  crestron-cli audio B=<source-id|source-name|partial-name> [--json|--yaml]",
+                    "",
+                    "Notes:",
+                    "  - Source name matching is case-insensitive",
+                    "  - Partial source name matching is supported",
+                    "  - If multiple matches exist, first deterministic match is selected",
+                ]
+            )
+        )
+        return
+
+    if kind == "scene":
+        print(
+            "\n".join(
+                [
+                    f"crestron-cli scene={target or '<id|name>'}",
+                    "",
+                    "Usage:",
+                    "  crestron-cli scene=<id|name> on|activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
+                    "",
+                    "Notes:",
+                    "  - Action tokens are case-insensitive",
+                    "  - on and activate are equivalent",
+                ]
+            )
+        )
+
+
+def _handle_light_target(target: str, argv: List[str]) -> int:
+    if any(flag in argv for flag in ("-h", "--help")):
+        _print_target_help("light", target)
+        return 0
+
+    tokens, fmt, parse_error = _extract_output_mode(argv)
+    if parse_error:
+        return _emit_error(parse_error)
+
+    tokens, level_text, kv_error = _parse_key_value(tokens, "level")
+    if kv_error:
+        return _emit_error(kv_error, fmt=fmt)
+
+    action_tokens = [token.lower().strip() for token in tokens if token.strip()]
+    on_flag = "on" in action_tokens
+    off_flag = "off" in action_tokens
+    toggle_flag = "toggle" in action_tokens
+
+    if on_flag and off_flag:
+        return _emit_error("conflicting actions: on and off", fmt=fmt)
+    if toggle_flag and (on_flag or off_flag):
+        return _emit_error("conflicting actions: toggle cannot be combined with on/off", fmt=fmt)
+
+    level_percent: int | None = None
+    if level_text is not None:
+        try:
+            level_percent = int(level_text)
+        except Exception:
+            return _emit_error("level must be an integer between 0 and 100", fmt=fmt)
+        if level_percent < 0 or level_percent > 100:
+            return _emit_error("level must be between 0 and 100", fmt=fmt)
+
+    if not any([on_flag, off_flag, toggle_flag, level_percent is not None]):
+        return _emit_error("light action is required", fmt=fmt, details="use on|off|toggle and/or level=<0..100>")
+
+    try:
+        config = load_config()
+        client = CrestronClient(config)
+        state = load_state()
+        if not has_cached_inventory(state):
+            state = _refresh_inventory(client, state)
+
+        target_token = _normalize_target_token(target)
+        light_id, light = resolve_light_target(state, target_token)
+        current_level = int(light.get("current_level") or 0)
+
+        if toggle_flag:
+            target_raw = 0 if current_level > 0 else 65535
+        elif off_flag:
+            target_raw = 0
+        elif level_percent is not None:
+            target_raw = percent_to_raw(level_percent)
+        else:
+            target_raw = 65535
+
+        client.set_light_state(light_id=light_id, level_raw=target_raw)
+
+        observed_from_refresh = True
+        try:
+            state = _refresh_inventory(client, state)
+        except Exception:
+            observed_from_refresh = False
+            state = update_light_level(state, light_id=light_id, level_raw=target_raw)
+            save_state(state)
+
+        current_light = ((state.get("lights") or {}).get("by_id") or {}).get(str(light_id)) or {}
+        observed_level = current_light.get("percent")
+        try:
+            observed_level_percent = int(round(float(observed_level))) if observed_level is not None else None
+        except Exception:
+            observed_level_percent = None
+
+        current_state = "unknown"
+        try:
+            current_state = "on" if int(current_light.get("current_level") or 0) > 0 else "off"
+        except Exception:
+            pass
+
+        emit_payload(
+            {
+                "success": True,
+                "message": f"{light.get('name') or f'Light {light_id}'} updated",
+                "data": {
+                    "object": "light",
+                    "id": light_id,
+                    "name": light.get("name") or f"Light {light_id}",
+                    "current_state": current_state,
+                    "level_percent": observed_level_percent,
+                    "observed_from_refresh": observed_from_refresh,
+                },
+            },
+            fmt,
+        )
+        return 0
+    except ConfigError as exc:
+        return _emit_error(str(exc), fmt=fmt)
+    except (CrestronApiError, StateError, RuntimeError) as exc:
+        return _emit_error("light action failed", fmt=fmt, details=str(exc))
+
+
+def _handle_audio_global_assignment(argv: List[str]) -> int:
+    if any(flag in argv for flag in ("-h", "--help")):
+        _print_target_help("audio-global")
+        return 0
+
+    tokens, fmt, parse_error = _extract_output_mode(argv)
+    if parse_error:
+        return _emit_error(parse_error)
+    if len(tokens) != 1 or "=" not in tokens[0]:
+        return _emit_error("audio player assignment must use A=<source> or B=<source>", fmt=fmt)
+
+    left, right = tokens[0].split("=", 1)
+    player = left.strip().upper()
+    source_target = right.strip()
+    if player not in {"A", "B"}:
+        return _emit_error("audio player assignment must use A=<source> or B=<source>", fmt=fmt)
+    if not source_target:
+        return _emit_error("audio player assignment requires a source id or name", fmt=fmt)
+
+    try:
+        config = load_config()
+        client = CrestronClient(config)
+        state = load_state()
+        if not has_cached_inventory(state):
+            state = _refresh_inventory(client, state)
+
+        sources = _collect_audio_sources(state)
+        selected: Dict[str, Any] | None = None
+        if source_target.isdigit():
+            wanted = int(source_target)
+            for source in sources:
+                if int(source.get("source_id") or -1) == wanted:
+                    selected = source
+                    break
+        else:
+            wanted_name = source_target.strip().lower()
+            for source in sources:
+                if str(source.get("source_name") or "").strip().lower() == wanted_name:
+                    selected = source
+                    break
+            if selected is None:
+                for source in sources:
+                    source_name = str(source.get("source_name") or "").strip().lower()
+                    if wanted_name in source_name:
+                        selected = source
+                        break
+
+        if selected is None:
+            return _emit_error("audio player assignment failed", fmt=fmt, details=f"unknown source '{source_target}'")
+
+        state = _set_audio_default(state, player, int(selected.get("source_id")), str(selected.get("source_name")))
+        save_state(state)
+
+        emit_payload(
+            {
+                "success": True,
+                "message": f"Player {player} source set",
+                "data": {
+                    "object": "audio-player",
+                    "player": player,
+                    "source_id": selected.get("source_id"),
+                    "source_name": selected.get("source_name"),
+                },
+            },
+            fmt,
+        )
+        return 0
+    except ConfigError as exc:
+        return _emit_error(str(exc), fmt=fmt)
+    except (CrestronApiError, StateError, RuntimeError) as exc:
+        return _emit_error("audio player assignment failed", fmt=fmt, details=str(exc))
+
+
+def _handle_audio_target(target: str, argv: List[str]) -> int:
+    if any(flag in argv for flag in ("-h", "--help")):
+        _print_target_help("audio-target", target)
+        return 0
+
+    tokens, fmt, parse_error = _extract_output_mode(argv)
+    if parse_error:
+        return _emit_error(parse_error)
+
+    tokens, level_text, kv_error = _parse_key_value(tokens, "level")
+    if kv_error:
+        return _emit_error(kv_error, fmt=fmt)
+    tokens, player_text, kv_error = _parse_key_value(tokens, "player")
+    if kv_error:
+        return _emit_error(kv_error, fmt=fmt)
+
+    action_tokens = [token.lower().strip() for token in tokens if token.strip()]
+    unsupported = [token for token in action_tokens if token not in {"on", "off", "toggle", "mute", "unmute"}]
+    if unsupported:
+        return _emit_error("unsupported audio action token", fmt=fmt, details=", ".join(sorted(set(unsupported))))
+
+    on_flag = "on" in action_tokens
+    off_flag = "off" in action_tokens
+    toggle_flag = "toggle" in action_tokens
+    mute_flag = "mute" in action_tokens
+    unmute_flag = "unmute" in action_tokens
+
+    if on_flag and off_flag:
+        return _emit_error("conflicting actions: on and off", fmt=fmt)
+    if toggle_flag and (on_flag or off_flag):
+        return _emit_error("conflicting actions: toggle cannot be combined with on/off", fmt=fmt)
+    if mute_flag and unmute_flag:
+        return _emit_error("conflicting actions: mute and unmute", fmt=fmt)
+
+    level_percent: int | None = None
+    if level_text is not None:
+        try:
+            level_percent = int(level_text)
+        except Exception:
+            return _emit_error("level must be an integer between 0 and 100", fmt=fmt)
+        if level_percent < 0 or level_percent > 100:
+            return _emit_error("level must be between 0 and 100", fmt=fmt)
+
+    requested_player: str | None = None
+    if player_text is not None:
+        requested_player = player_text.strip().upper()
+        if requested_player not in {"A", "B"}:
+            return _emit_error("player must be A or B", fmt=fmt)
+
+    if not any([on_flag, off_flag, toggle_flag, mute_flag, unmute_flag, level_percent is not None, requested_player is not None]):
+        return _emit_error("audio action is required", fmt=fmt, details="use on|off|toggle|mute|unmute and/or level=<0..100> player=<A|B>")
+
+    if off_flag and level_percent is not None:
+        return _emit_error("conflicting actions: off cannot be combined with level", fmt=fmt)
+
+    try:
+        config = load_config()
+        client = CrestronClient(config)
+        state = load_state()
+        if not has_cached_inventory(state):
+            state = _refresh_inventory(client, state)
+
+        speaker_id, speaker = resolve_speaker_target(state, _normalize_speaker_target_token(target))
+        current_power_state = str(speaker.get("current_power_state") or "").lower()
+
+        if toggle_flag:
+            if current_power_state == "on":
+                off_flag = True
+            else:
+                on_flag = True
+
+        if level_percent is not None and current_power_state != "on" and not off_flag:
+            on_flag = True
+
+        effective_player: str | None = requested_player
+        if on_flag and effective_player is None:
+            effective_player = "A"
+
+        selected_source_id: int | None = None
+        selected_source_name: str | None = None
+        if effective_player in {"A", "B"}:
+            preferred_source_id: int | None = None
+            defaults = _get_audio_defaults(state)
+            default_entry = defaults.get(effective_player) or {}
+            try:
+                preferred_source_id = int(default_entry.get("source_id")) if default_entry.get("source_id") is not None else None
+            except Exception:
+                preferred_source_id = None
+            selected_source_id, selected_source_name = resolve_speaker_source_target(
+                speaker,
+                None,
+                player=effective_player,
+                preferred_source_id=preferred_source_id,
+            )
+
+        if on_flag:
+            try:
+                client.set_speaker_power(speaker_id, "on")
+            except CrestronApiError as exc:
+                if exc.status_code != 409:
+                    raise
+
+        if selected_source_id is not None and (effective_player is not None):
+            try:
+                client.select_speaker_source(speaker_id, selected_source_id)
+            except CrestronApiError as exc:
+                if exc.status_code != 409:
+                    raise
+
+        if level_percent is not None:
+            client.set_speaker_volume(speaker_id, level_percent)
+
+        if mute_flag:
+            client.mute_speaker(speaker_id)
+        if unmute_flag:
+            client.unmute_speaker(speaker_id)
+
+        if off_flag:
+            client.set_speaker_power(speaker_id, "off")
+
+        observed_from_refresh = True
+        try:
+            state = _refresh_inventory(client, state)
+        except Exception:
+            observed_from_refresh = False
+            save_state(state)
+
+        current = ((state.get("speakers") or {}).get("by_id") or {}).get(str(speaker_id)) or {}
+        current_source_id = current.get("current_source_id")
+        current_source_name: str | None = None
+        current_player = "unknown"
+        for src in current.get("available_sources") or []:
+            if not isinstance(src, dict):
+                continue
+            try:
+                sid = int(src.get("id")) if src.get("id") is not None else None
+            except Exception:
+                sid = None
+            if sid is not None and current_source_id is not None and int(current_source_id) == sid:
+                current_source_name = str(src.get("source_name") or "")
+                current_player = _infer_player_from_source_name(current_source_name)
+                break
+
+        emit_payload(
+            {
+                "success": True,
+                "message": f"{speaker.get('name') or f'Audio {speaker_id}'} updated",
+                "data": {
+                    "object": "audio",
+                    "id": speaker_id,
+                    "name": speaker.get("name") or f"Audio {speaker_id}",
+                    "current_state": str(current.get("current_power_state") or "unknown"),
+                    "level_percent": current.get("current_volume_percent"),
+                    "mute": str(current.get("current_mute_state") or "unknown"),
+                    "player": current_player,
+                    "source_id": current_source_id,
+                    "source_name": _strip_player_prefix(current_source_name) if current_source_name else None,
+                    "observed_from_refresh": observed_from_refresh,
+                },
+            },
+            fmt,
+        )
+        return 0
+    except ConfigError as exc:
+        return _emit_error(str(exc), fmt=fmt)
+    except (CrestronApiError, StateError, RuntimeError) as exc:
+        return _emit_error("audio action failed", fmt=fmt, details=str(exc))
+
+
+def _handle_scene_target(target: str, argv: List[str]) -> int:
+    if any(flag in argv for flag in ("-h", "--help")):
+        _print_target_help("scene", target)
+        return 0
+
+    json_flag = False
+    yaml_flag = False
+    tokens: List[str] = []
+    for token in argv:
+        lowered = token.lower()
+        if lowered == "--json":
+            json_flag = True
+            continue
+        if lowered == "--yaml":
+            yaml_flag = True
+            continue
+        tokens.append(token)
+
+    if json_flag and yaml_flag:
+        return _emit_error("choose only one of --json or --yaml")
+    fmt = default_output_format(json_flag, yaml_flag)
+
+    scene_type: str | None = None
+    room_id: int | None = None
+    actions: List[str] = []
+
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        lowered = token.lower()
+        if lowered == "--type":
+            if idx + 1 >= len(tokens):
+                return _emit_error("--type requires lighting or media", fmt=fmt)
+            scene_type = tokens[idx + 1].strip().lower()
+            idx += 2
+            continue
+        if lowered.startswith("--type="):
+            scene_type = token.split("=", 1)[1].strip().lower()
+            idx += 1
+            continue
+        if lowered == "--room-id":
+            if idx + 1 >= len(tokens):
+                return _emit_error("--room-id requires an integer value", fmt=fmt)
+            try:
+                room_id = int(tokens[idx + 1].strip())
+            except Exception:
+                return _emit_error("--room-id requires an integer value", fmt=fmt)
+            idx += 2
+            continue
+        if lowered.startswith("--room-id="):
+            try:
+                room_id = int(token.split("=", 1)[1].strip())
+            except Exception:
+                return _emit_error("--room-id requires an integer value", fmt=fmt)
+            idx += 1
+            continue
+        if token.startswith("--"):
+            return _emit_error(f"unknown option '{token}'", fmt=fmt)
+        actions.append(lowered)
+        idx += 1
+
+    on_flag = "on" in actions or "activate" in actions
+    if not on_flag:
+        return _emit_error("scene action is required", fmt=fmt, details="use on or activate")
+
+    unsupported = [token for token in actions if token not in {"on", "activate"}]
+    if unsupported:
+        return _emit_error("unsupported scene action token", fmt=fmt, details=", ".join(sorted(set(unsupported))))
+
+    if scene_type is not None and scene_type not in {"lighting", "media"}:
+        return _emit_error("--type must be lighting or media", fmt=fmt)
+
+    try:
+        config = load_config()
+        client = CrestronClient(config)
+        state = load_state()
+        if not has_cached_inventory(state):
+            state = _refresh_inventory(client, state)
+
+        scene_id, scene = resolve_scene_target(state, _normalize_scene_target_token(target), scene_type=scene_type, room_id=room_id)
+        client.recall_scene(scene_id=scene_id)
+
+        emit_payload(
+            {
+                "success": True,
+                "message": f"Scene {scene.get('name') or scene_id} activated",
+                "data": {
+                    "object": "scene",
+                    "id": scene_id,
+                    "name": scene.get("name") or f"Scene {scene_id}",
+                    "current_state": "activated",
+                    "scene_type": scene.get("scene_type"),
+                },
+            },
+            fmt,
+        )
+        return 0
+    except ConfigError as exc:
+        return _emit_error(str(exc), fmt=fmt)
+    except (CrestronApiError, StateError, RuntimeError) as exc:
+        return _emit_error("scene action failed", fmt=fmt, details=str(exc))
+
+
 def _print_root_help() -> None:
     text = "\n".join(
         [
@@ -1405,10 +1976,11 @@ def _print_root_help() -> None:
             "  crestron-cli query room=<id|name> [lights|scenes|audio] [player|source] [--refresh] [--raw|--json|--yaml]",
             "  crestron-cli query rooms [--refresh] [--raw|--json|--yaml]",
             "  crestron-cli query audio [room=<id|name>|player|source] [--refresh] [--raw|--json|--yaml]",
-            "  crestron-cli scene <target> {on|activate} [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
-            "  crestron-cli audio <target> {on|off|set|mute|unmute|toggle|source} [value] [--player <A|B>] [--json|--yaml]",
-            "  crestron-cli audio <A|B>=<source-id|source-name>",
-            "  crestron-cli light <target> {on|off|set|toggle} [value] [--json|--yaml]",
+            "  crestron-cli light=<id|name> on|off|toggle|level=<0..100> [--json|--yaml]",
+            "  crestron-cli audio=<id|name> [on|off|toggle] [level=<0..100>] [mute|unmute] [player=<A|B>] [--json|--yaml]",
+            "  crestron-cli scene=<id|name> on|activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
+            "  crestron-cli audio A=<source-id|source-name|partial-name> [--json|--yaml]",
+            "  crestron-cli audio B=<source-id|source-name|partial-name> [--json|--yaml]",
             "",
             "Environment:",
             "  CRESTRON_HOME_IP (required)",
@@ -1427,18 +1999,27 @@ def main(argv: List[str] | None = None) -> int:
         return 0
 
     command = argv[0]
-    if command == "initialize":
+    command_lower = command.lower()
+
+    if "=" in command:
+        key, value = command.split("=", 1)
+        key_lower = key.strip().lower()
+        target_value = value.strip()
+        if not target_value:
+            return _emit_error(f"{key_lower} target cannot be empty")
+        if key_lower == "light":
+            return _handle_light_target(target_value, argv[1:])
+        if key_lower == "audio":
+            return _handle_audio_target(target_value, argv[1:])
+        if key_lower == "scene":
+            return _handle_scene_target(target_value, argv[1:])
+
+    if command_lower == "initialize":
         return _initialize_command(argv[1:])
-    if command == "query":
+    if command_lower == "query":
         return _query_command(argv[1:])
-    if command == "scene":
-        return _scene_command(argv[1:])
-    if command == "speaker":
-        return _speaker_command(argv[1:])
-    if command == "audio":
-        return _audio_command(argv[1:])
-    if command == "light":
-        return _action_command(argv[1:])
+    if command_lower == "audio":
+        return _handle_audio_global_assignment(argv[1:])
 
     return _emit_error(f"unknown command '{command}'", details="run 'crestron-cli --help' for usage")
 
