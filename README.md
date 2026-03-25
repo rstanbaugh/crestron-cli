@@ -3,11 +3,24 @@
 Lightweight CLI for Crestron Home control with cache-backed targeting.
 
 Current MVP supports:
-- initialize and cache inventory (`rooms`, `lights`, `scenes`)
-- query lights/rooms/scenes/speakers
+- initialize and cache inventory (`rooms`, `lights`, `scenes`, `speakers`)
+- query lights/rooms/scenes/audio
 - light actions (`on`, `off`, `set`, `toggle`)
 - scene activation (`scene <target> on|activate`) for lighting and media scenes
-- speaker actions (`speaker <target> on|off|set|mute|unmute|toggle|source`)
+- audio actions (`audio <target> on|off|set|mute|unmute|toggle|source`)
+
+Action semantics (all systems):
+- lights: `toggle` toggles light power intent (`on`/`off`) based on current level
+- scenes: `on` and `activate` are equivalent scene recall actions
+- audio rooms: `toggle` toggles power (`on`/`off`), while `mute`/`unmute` control mute explicitly
+
+Audio/source defaults:
+- `audio <target> on` now defaults to Player A when `--player` is omitted
+- global player sources are shared (`Player A`, `Player B`) and affect any room routed to that player
+- use `crestron-cli query audio` to inspect room audio state (including current player)
+- use `crestron-cli query audio player` to inspect current Player A/B sources
+- use `crestron-cli query audio source` to list available sources and IDs
+- use `crestron-cli audio <A|B>=<source-id|source-name>` to set global player source
 
 ## AI/Agent Usage (Recommended)
 
@@ -25,16 +38,18 @@ Suggested command sequence for agents:
 crestron-cli initialize --yaml
 crestron-cli query rooms --yaml
 crestron-cli query lights --yaml
+crestron-cli query audio --yaml
 crestron-cli light "Kitchen Island" set 35 --yaml
 ```
 
 Structured response shape (stable contract):
 
 - initialize: `success`, `message`, `data.rooms`, `data.lights`, `data.scenes`, `data.speakers`, `data.state_path`
-- query lights|rooms|scenes|speakers: `success`, `entity`, `count`, `refreshed`, `items[]` (scene items include `scene_type`)
-- actions (on/off/set/toggle): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.level_raw`, `data.level_percent`
-- scene action (activate): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.scene_type`, `data.room_id`
-- speaker action: `success`, `message`, `data.id`, `data.name`, `data.action`, `data.room_id`, optional `data.level_percent`, `data.source_id`, `data.source_name`, `data.player`
+- query lights|rooms|scenes|audio: `success`, `entity`, `count`, `refreshed`, `items[]` (`query audio` returns room audio state, `query audio player` returns Player A/B mapping, `query audio source` returns sources)
+- light action (on/off/set/toggle): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.current_state`, `data.requested_level_raw`, `data.requested_level_percent`, `data.level_raw`, `data.level_percent`, `data.observed_from_refresh`
+- scene action (on/activate): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.current_state`, `data.scene_type`, `data.room_id`
+- audio action (on/off/set/mute/unmute/toggle/source): `success`, `message`, `data.id`, `data.name`, `data.action`, `data.current_state`, `data.room_id`, optional `data.level_percent`, `data.source_id`, `data.source_name`, `data.player`, `data.current_power_state`, `data.current_mute_state`, `data.current_source_id`, `data.current_source_name`, `data.current_player`, `data.observed_from_refresh`
+- audio player assignment (`audio A=<source>`): `success`, `message`, `data.player`, `data.source_id`, `data.source_name`
 - errors: `success: false`, `error`, optional `details`
 
 ## Runtime model
@@ -95,11 +110,13 @@ exec "$PY" "$TOOL" "$@"
 
 ```text
 crestron-cli initialize [--force] [--verbose] [--json|--yaml]
-crestron-cli query [lights|scenes|speakers] [room=<id>] [--refresh] [--raw|--json|--yaml]
-crestron-cli query room=<id> [lights|scenes|speakers] [--refresh] [--raw|--json|--yaml]
+crestron-cli query [lights|scenes|audio] [room=<id|name>] [player|source] [--refresh] [--raw|--json|--yaml]
+crestron-cli query room=<id|name> [lights|scenes|audio] [player|source] [--refresh] [--raw|--json|--yaml]
 crestron-cli query rooms [--refresh] [--raw|--json|--yaml]
+crestron-cli query audio [room=<id|name>|player|source] [--refresh] [--raw|--json|--yaml]
 crestron-cli scene <target> {on|activate} [--type <lighting|media>] [--room-id <id>] [--json|--yaml]
-crestron-cli speaker <target> {on|off|set|mute|unmute|toggle|source} [value] [--player <A|B>] [--json|--yaml]
+crestron-cli audio <target> {on|off|set|mute|unmute|toggle|source} [value] [--player <A|B>] [--json|--yaml]
+crestron-cli audio <A|B>=<source-id|source-name>
 crestron-cli light <target> {on|off|set|toggle} [value] [--json|--yaml]
 ```
 
@@ -109,19 +126,26 @@ Examples:
 crestron-cli query
 crestron-cli query lights --raw
 crestron-cli query lights room=10
+crestron-cli query lights room='Man Cave'
 crestron-cli query room=10 lights
+crestron-cli query room='man cave' lights
 crestron-cli query scenes room=10
 crestron-cli query room=10 scenes --raw
-crestron-cli query speakers --yaml
-crestron-cli query room=10 speakers --raw
+crestron-cli query audio --yaml
+crestron-cli query audio room='man cave' --yaml
+crestron-cli query audio player --yaml
+crestron-cli query audio source --yaml
 crestron-cli light "Kitchen Island" set 35 --yaml
 crestron-cli light id=1135 toggle --yaml
 crestron-cli scene "Happy Hour" on --type media --yaml
 crestron-cli scene id=52138 activate --yaml
-crestron-cli speaker "Kitchen" on --player A --yaml
-crestron-cli speaker "Kitchen" set 35 --yaml
-crestron-cli speaker "Kitchen" toggle --yaml
-crestron-cli speaker "Kitchen" source "Player B Spotify" --player B --yaml
+crestron-cli audio "Kitchen" on --yaml
+crestron-cli audio "Kitchen" on --player A --yaml
+crestron-cli audio "Kitchen" set 35 --yaml
+crestron-cli audio "Kitchen" toggle --yaml
+crestron-cli audio "Kitchen" source "Player B Spotify" --player B --yaml
+crestron-cli audio A="Spotify" --yaml
+crestron-cli audio B=52312 --yaml
 ```
 
 ### Target syntax
@@ -130,6 +154,8 @@ Supported target formats:
 - numeric id: `1135`
 - id token: `id=1135`
 - cached name: `"Billiards Table"`
+
+If multiple lights share the same name, name targeting is ambiguous and the CLI will require `id=...`.
 
 Examples:
 

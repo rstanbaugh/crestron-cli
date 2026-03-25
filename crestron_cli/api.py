@@ -11,6 +11,7 @@ except Exception:
     requests = None
 
 from .config import Config
+from .utils import raw_to_percent
 
 
 ERROR_SOURCE_MAP = {
@@ -431,6 +432,9 @@ class CrestronClient:
             current_volume = self._pick(item, "currentVolumeLevel", "CurrentVolumeLevel", "volume", "Volume")
             try:
                 current_volume_percent = int(round(float(current_volume))) if current_volume is not None else None
+                if current_volume_percent is not None and current_volume_percent > 100:
+                    normalized = raw_to_percent(current_volume_percent)
+                    current_volume_percent = int(round(normalized)) if normalized is not None else None
             except Exception:
                 current_volume_percent = None
 
@@ -487,7 +491,8 @@ class CrestronClient:
         last_error: Optional[CrestronApiError] = None
         for path in paths:
             try:
-                return self._request("POST", path, include_authkey=True)
+                # Some Crestron servers reject body-less POST with HTTP 411.
+                return self._request("POST", path, json_body={}, include_authkey=True)
             except CrestronApiError as exc:
                 last_error = exc
                 continue

@@ -114,7 +114,7 @@ def _build_room_maps(rooms: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def _build_light_maps(lights: List[Dict[str, Any]]) -> Dict[str, Any]:
     by_id: Dict[str, Dict[str, Any]] = {}
-    by_name: Dict[str, int] = {}
+    by_name: Dict[str, List[int]] = {}
 
     for light in lights:
         light_id = light.get("id")
@@ -143,7 +143,11 @@ def _build_light_maps(lights: List[Dict[str, Any]]) -> Dict[str, Any]:
 
         normalized = normalize_name(record["name"])
         if normalized:
-            by_name[normalized] = light_id_int
+            existing = by_name.get(normalized)
+            if isinstance(existing, list):
+                existing.append(light_id_int)
+            else:
+                by_name[normalized] = [light_id_int]
 
     return {"by_id": by_id, "by_name_normalized": by_name}
 
@@ -203,6 +207,9 @@ def _build_speaker_maps(speakers: List[Dict[str, Any]]) -> Dict[str, Any]:
         current_volume_percent = speaker.get("current_volume_percent")
         try:
             current_volume_percent = int(round(float(current_volume_percent))) if current_volume_percent is not None else None
+            if current_volume_percent is not None and current_volume_percent > 100:
+                normalized = raw_to_percent(current_volume_percent)
+                current_volume_percent = int(round(normalized)) if normalized is not None else None
         except Exception:
             current_volume_percent = None
 
@@ -305,6 +312,27 @@ def room_name_for_id(state: Dict[str, Any], room_id: Any) -> Optional[str]:
     return None
 
 
+def resolve_room_target(state: Dict[str, Any], target: str) -> int:
+    rooms = (state.get("rooms") or {}).get("by_id") or {}
+    name_map = (state.get("rooms") or {}).get("by_name_normalized") or {}
+
+    stripped = target.strip()
+    if stripped.isdigit():
+        room_id = int(stripped)
+        if not isinstance(rooms.get(str(room_id)), dict):
+            raise StateError(f"unknown room id {target}")
+        return room_id
+
+    normalized = normalize_name(stripped)
+    room_id = name_map.get(normalized)
+    if room_id is None:
+        raise StateError(f"unknown room target '{target}'")
+
+    if not isinstance(rooms.get(str(room_id)), dict):
+        raise StateError(f"room id {room_id} is missing from cache")
+    return int(room_id)
+
+
 def resolve_light_target(state: Dict[str, Any], target: str) -> Tuple[int, Dict[str, Any]]:
     lights = (state.get("lights") or {}).get("by_id") or {}
     name_map = (state.get("lights") or {}).get("by_name_normalized") or {}
@@ -317,10 +345,30 @@ def resolve_light_target(state: Dict[str, Any], target: str) -> Tuple[int, Dict[
         return int(key), light
 
     normalized = normalize_name(target)
-    light_id = name_map.get(normalized)
-    if light_id is None:
+    light_ids = name_map.get(normalized)
+    if light_ids is None:
         raise StateError(f"unknown light target '{target}'")
 
+    if isinstance(light_ids, int):
+        light_ids = [light_ids]
+    if not isinstance(light_ids, list) or not light_ids:
+        raise StateError(f"unknown light target '{target}'")
+
+    candidate_ids: List[int] = []
+    for value in light_ids:
+        try:
+            candidate_ids.append(int(value))
+        except Exception:
+            continue
+
+    if not candidate_ids:
+        raise StateError(f"unknown light target '{target}'")
+
+    if len(candidate_ids) > 1:
+        ids_text = ", ".join(str(light_id) for light_id in sorted(candidate_ids))
+        raise StateError(f"ambiguous light target '{target}'; use id=... (matches: {ids_text})")
+
+    light_id = candidate_ids[0]
     light = lights.get(str(light_id))
     if not isinstance(light, dict):
         raise StateError(f"light id {light_id} is missing from cache")
@@ -500,11 +548,6 @@ def resolve_speaker_source_target(
     if not available_sources:
         raise StateError("speaker has no available sources")
 
-    if preferred_source_id is not None:
-        for src in available_sources:
-            if int(src.get("id") or -1) == int(preferred_source_id):
-                return int(src.get("id")), str(src.get("source_name") or "")
-
     normalized_target = normalize_name(source_target) if source_target else ""
     normalized_player = normalize_name(player) if player else ""
 
@@ -512,6 +555,12 @@ def resolve_speaker_source_target(
         if not normalized_player:
             return True
         return normalize_name(src_name).startswith(f"player {normalized_player}")
+
+    if preferred_source_id is not None:
+        for src in available_sources:
+            src_name = str(src.get("source_name") or "")
+            if int(src.get("id") or -1) == int(preferred_source_id) and _matches_player(src_name):
+                return int(src.get("id")), src_name
 
     # Explicit source id.
     if source_target and source_target.strip().isdigit():
