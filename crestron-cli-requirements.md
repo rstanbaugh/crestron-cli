@@ -108,7 +108,7 @@ crestron-cli <target> off
 crestron-cli <target> set <level>     # level = 0–100 integer
 crestron-cli <target> toggle
 crestron-cli scene <target> activate [--type <lighting|media>] [--room-id <id>]
-crestron-cli speaker <target> on|off|set <level>|mute|unmute|togglemute|source <id|name> [--player A|B]
+crestron-cli speaker <target> on|off|set <level>|mute|unmute|togglemute|service <id|name> [--player A|B]
 ```
 `<target>`: numeric ID or name (resolved from cache)
 Name resolution: exact match (case-insensitive) via `by_name_normalized`
@@ -123,7 +123,7 @@ Print summary (room/light/scene counts)
 `query lights`: name, id, room name/id, current level (raw + %)
 `query rooms`: name, id
 `query scenes`: name, id, room, scene type
-`query speakers`: room, id, power, mute, volume percent, source id
+`query speakers`: room, id, power, mute, volume percent, service id
 Scene activation: `crestron-cli scene <target> activate` with optional `--type <lighting|media>` and `--room-id <id>` disambiguation
 Speaker actions use Media Rooms API (`/mediarooms`) with room-first target resolution and percent-based volume control
 Actions: POST /lights/SetState

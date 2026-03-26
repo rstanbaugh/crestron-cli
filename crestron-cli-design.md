@@ -25,7 +25,7 @@ MVP scope implements:
 - query commands for lights/rooms/scenes/speakers
 - light control commands: `on`, `off`, `set`, `toggle`
 - scene activation command for both lighting and media scenes
-- speaker control commands: `on`, `off`, `set`, `mute`, `unmute`, `togglemute`, `source`
+- speaker control commands: `on`, `off`, `set`, `mute`, `unmute`, `togglemute`, `service`
 
 Out of scope for MVP:
 - quickactions control
@@ -111,11 +111,11 @@ commands:
       - resolve scene id/name with optional type disambiguation
       - POST /scenes/recall/{id}
   speaker_action:
-    syntax: crestron-cli speaker <target> {on|off|set|mute|unmute|togglemute|source} [value] [--player <A|B>] [--json|--yaml]
+    syntax: crestron-cli speaker <target> {on|off|set|mute|unmute|togglemute|service} [value] [--player <A|B>] [--json|--yaml]
     effects:
       - resolve target room/speaker id
       - POST /mediarooms actions
-      - update cache and optional player source default
+      - update cache and optional player service default
   target_action:
     syntax:
       - crestron-cli <target> on
@@ -154,10 +154,10 @@ scenes:
   by_id: {"<id>": {id, name, room_id, scene_type, status}}
   by_name_normalized: {"<normalized name>": [<id>, ...]}
 speakers:
-  by_id: {"<id>": {id, name, room_id, current_volume_percent, current_mute_state, current_power_state, current_source_id, available_sources}}
+  by_id: {"<id>": {id, name, room_id, current_volume_percent, current_mute_state, current_power_state, current_service_id, available_services}}
   by_name_normalized: {"<normalized name>": <id>}
 speaker_presets:
-  by_room_id: {"<room_id>": {"A": <source_id>, "B": <source_id>}}
+  by_room_id: {"<room_id>": {"A": <service_id>, "B": <service_id>}}
 quickactions: {}
 metadata:
   server_firmware: <string|null>

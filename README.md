@@ -14,13 +14,13 @@ Action semantics (all systems):
 - scenes: `on` and `activate` are equivalent scene recall actions
 - audio loads: `toggle` toggles power (`on`/`off`), while `mute`/`unmute` control mute explicitly
 
-Audio/source defaults:
+Audio/service defaults:
 - `audio=<target> on` defaults to Player A when `player=` is omitted
-- global player sources are shared (`Player A`, `Player B`) and affect any room routed to that player
+- global player services are shared (`Player A`, `Player B`) and affect any room routed to that player
 - use `crestron-cli query audio` to inspect room audio state (including current player)
-- use `crestron-cli query audio player` to inspect current Player A/B sources
-- use `crestron-cli query audio source` to list available sources and IDs
-- use `crestron-cli audio <A|B>=<source-id|source-name>` to set global player source (name matching is case-insensitive and supports partial text)
+- use `crestron-cli query audio player` to inspect current Player A/B services
+- use `crestron-cli query audio service` to list available services and IDs
+- use `crestron-cli audio <A|B>=<service-id|service-name>` to set global player service (name matching is case-insensitive and supports partial text)
 
 ## AI/Agent Usage (Recommended)
 
@@ -45,11 +45,11 @@ crestron-cli light="Kitchen Island" level=35 --yaml
 Structured response shape (stable contract):
 
 - initialize: `success`, `message`, `data.rooms`, `data.lights`, `data.scenes`, `data.speakers`, `data.state_path`
-- query lights|rooms|scenes|audio: `success`, `entity`, `count`, `refreshed`, `items[]` (`query audio` returns room audio state, `query audio player` returns Player A/B mapping, `query audio source` returns sources)
+- query lights|rooms|scenes|audio: `success`, `entity`, `count`, `refreshed`, `items[]` (`query audio` returns room audio state, `query audio player` returns Player A/B mapping, `query audio service` returns services)
 - light action: `success`, `message`, `data.object`, `data.id`, `data.name`, `data.current_state`, optional `data.level_percent`, `data.observed_from_refresh`
 - scene action: `success`, `message`, `data.object`, `data.id`, `data.name`, `data.current_state`, optional `data.scene_type`
-- audio action: `success`, `message`, `data.object`, `data.id`, `data.name`, `data.current_state`, optional `data.level_percent`, `data.mute`, `data.player`, `data.source_id`, `data.source_name`, `data.observed_from_refresh`
-- audio player assignment (`audio A=<source>`): `success`, `message`, `data.object`, `data.player`, `data.source_id`, `data.source_name`
+- audio action: `success`, `message`, `data.object`, `data.id`, `data.name`, `data.current_state`, optional `data.level_percent`, `data.mute`, `data.player`, `data.service_id`, `data.service_name`, `data.observed_from_refresh`
+- audio player assignment (`audio A=<service>`): `success`, `message`, `data.object`, `data.player`, `data.service_id`, `data.service_name`
 - errors: `success: false`, `error`, optional `details`
 
 ## Package assumptions
@@ -131,13 +131,13 @@ exec "$PY" -m crestron_cli "$@"
 
 ```text
 crestron-cli initialize [--force] [--verbose] [--json|--yaml]
-crestron-cli query [lights|scenes|audio] [room=<id|name>] [player|source] [--refresh] [--raw|--json|--yaml]
-crestron-cli query room=<id|name> [lights|scenes|audio] [player|source] [--refresh] [--raw|--json|--yaml]
+crestron-cli query [lights|scenes|audio] [room=<id|name>] [player|service] [--refresh] [--raw|--json|--yaml]
+crestron-cli query room=<id|name> [lights|scenes|audio] [player|service] [--refresh] [--raw|--json|--yaml]
 crestron-cli query rooms [--refresh] [--raw|--json|--yaml]
-crestron-cli query audio [room=<id|name>|player|source] [--refresh] [--raw|--json|--yaml]
+crestron-cli query audio [room=<id|name>|player|service] [--refresh] [--raw|--json|--yaml]
 crestron-cli scene=<id|name> on|activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]
 crestron-cli audio=<id|name> [on|off|toggle] [level=<0..100>] [mute|unmute] [player=<A|B>] [--json|--yaml]
-crestron-cli audio <A|B>=<source-id|source-name> [--json|--yaml]
+crestron-cli audio <A|B>=<service-id|service-name> [--json|--yaml]
 crestron-cli light=<id|name> on|off|toggle|level=<0..100> [--json|--yaml]
 ```
 
@@ -155,7 +155,7 @@ crestron-cli query room=10 scenes --raw
 crestron-cli query audio --yaml
 crestron-cli query audio room='man cave' --yaml
 crestron-cli query audio player --yaml
-crestron-cli query audio source --yaml
+crestron-cli query audio service --yaml
 crestron-cli light="Kitchen Island" level=35 --yaml
 crestron-cli light=1135 toggle --yaml
 crestron-cli scene="Happy Hour" on --type media --yaml

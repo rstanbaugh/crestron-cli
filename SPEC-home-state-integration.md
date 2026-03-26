@@ -42,7 +42,7 @@ Export includes:
 - rooms
 - lights
 - scenes
-- source ids
+- service ids
 - last refresh timestamp
 
 Requirements:

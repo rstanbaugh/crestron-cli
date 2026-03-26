@@ -88,7 +88,7 @@ def _refresh_inventory(client: CrestronClient, current_state: Dict[str, Any]) ->
         player = _infer_player_from_source_name(source_name)
         if player in {"A", "B"}:
             existing = defaults.get(player) or {}
-            if existing.get("source_id") is None:
+            if existing.get("service_id") is None:
                 refreshed_state = _set_audio_default(refreshed_state, player, int(current_source_id), _strip_player_prefix(source_name) or str(source_name or ""))
 
     save_state(refreshed_state)
@@ -142,14 +142,18 @@ def _parse_query_selector(selector: str | None, query_filter: str | None, query_
 
         if normalized in {"player", "players"}:
             if audio_view is not None:
-                return "", None, None, "multiple audio selectors provided; use only one of player or source"
+                return "", None, None, "multiple audio selectors provided; use only one of player or service"
             audio_view = "player"
             continue
 
-        if normalized in {"source", "sources"}:
+        if normalized in {"service", "services"}:
             if audio_view is not None:
-                return "", None, None, "multiple audio selectors provided; use only one of player or source"
-            audio_view = "source"
+                return "", None, None, "multiple audio selectors provided; use only one of player or service"
+            audio_view = "service"
+            continue
+
+        if normalized in {"source", "sources"}:
+            return "", None, None, "audio view 'source' was renamed to 'service'"
             continue
 
         parsed_room_selector, room_error = _parse_room_filter_token(token)
@@ -163,7 +167,7 @@ def _parse_query_selector(selector: str | None, query_filter: str | None, query_
         entity = "lights"
 
     if audio_view is not None and entity != "audio":
-        return "", None, None, "audio player/source selectors are only valid with query audio"
+        return "", None, None, "audio player/service selectors are only valid with query audio"
 
     if room_selector is not None and entity not in {"lights", "scenes", "audio"}:
         return "", None, None, "room filter is only supported for lights, scenes, and audio queries"
@@ -179,8 +183,8 @@ def _print_query_help(entity: str | None, audio_view: str | None = None) -> None
         view_hint = ""
         if audio_view == "player":
             view_hint = "\nSelected view: player"
-        elif audio_view == "source":
-            view_hint = "\nSelected view: source"
+        elif audio_view == "service":
+            view_hint = "\nSelected view: service"
         text = "\n".join(
             [
                 "crestron-cli query audio",
@@ -188,13 +192,13 @@ def _print_query_help(entity: str | None, audio_view: str | None = None) -> None
                 "Usage:",
                 "  crestron-cli query audio [<view>] [room=<id|name>] [--refresh] [--raw|--json|--yaml]",
                 "  crestron-cli query audio player [--refresh] [--raw|--json|--yaml]",
-                "  crestron-cli query audio source [room=<id|name>] [--refresh] [--raw|--json|--yaml]",
-                "  crestron-cli query room=<id|name> audio [player|source] [--refresh] [--raw|--json|--yaml]",
+                "  crestron-cli query audio service [room=<id|name>] [--refresh] [--raw|--json|--yaml]",
+                "  crestron-cli query room=<id|name> audio [player|service] [--refresh] [--raw|--json|--yaml]",
                 "",
                 "Views:",
                 "  status (default)  Room audio status (name, power, mute, volume %, player)",
-                "  audio player  Global Player A/B source mapping",
-                "  audio source  Available source names and source IDs",
+                "  audio player   Global Player A/B service mapping",
+                "  audio service  Available service names and service IDs",
                 "",
                 "Options:",
                 "  --refresh  Bypass cache and pull fresh inventory from controller before query",
@@ -277,11 +281,11 @@ def _get_audio_defaults(state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return defaults
 
 
-def _set_audio_default(state: Dict[str, Any], player: str, source_id: int, source_name: str) -> Dict[str, Any]:
+def _set_audio_default(state: Dict[str, Any], player: str, service_id: int, service_name: str) -> Dict[str, Any]:
     defaults = _get_audio_defaults(state)
     defaults[player] = {
-        "source_id": int(source_id),
-        "source_name": str(source_name),
+        "service_id": int(service_id),
+        "service_name": str(service_name),
     }
     return state
 
@@ -305,7 +309,7 @@ def _player_source_catalog(state: Dict[str, Any]) -> Dict[str, Dict[int, str]]:
     return catalog
 
 
-def _collect_audio_sources(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[str, Any]]:
+def _collect_audio_services(state: Dict[str, Any], room_id: int | None = None) -> List[Dict[str, Any]]:
     by_id: Dict[int, Dict[str, Any]] = {}
     for speaker in list_speakers(state, room_id=room_id):
         for source in speaker.get("available_sources") or []:
@@ -321,16 +325,16 @@ def _collect_audio_sources(state: Dict[str, Any], room_id: int | None = None) ->
             player = _infer_player_from_source_name(raw_source_name)
             source_name = _strip_player_prefix(raw_source_name) or raw_source_name
             by_id[source_id] = {
-                "source_id": source_id,
-                "source_name": source_name,
+                "service_id": source_id,
+                "service_name": source_name,
                 "player": f"Player {player}" if player in {"A", "B"} else "unset",
             }
     items = list(by_id.values())
     items.sort(
         key=lambda row: (
             str(row.get("player") or "").lower(),
-            str(row.get("source_name") or "").lower(),
-            int(row.get("source_id") or 0),
+            str(row.get("service_name") or "").lower(),
+            int(row.get("service_id") or 0),
         )
     )
     return items
@@ -362,7 +366,7 @@ def _list_audio_status(state: Dict[str, Any], room_id: int | None = None) -> Lis
                 break
 
         player = _infer_player_from_source_name(current_source_name)
-        source_display = _strip_player_prefix(current_source_name) if player in {"A", "B"} else None
+        service_display = _strip_player_prefix(current_source_name) if player in {"A", "B"} else None
 
         items.append(
             {
@@ -372,7 +376,7 @@ def _list_audio_status(state: Dict[str, Any], room_id: int | None = None) -> Lis
                 "current_mute_state": speaker.get("current_mute_state") or "unknown",
                 "current_volume_percent": volume_percent,
                 "player": player,
-                "source": source_display,
+                "service": service_display,
                 "room_id": speaker.get("room_id"),
                 "room_name": speaker.get("room_name"),
             }
@@ -386,13 +390,13 @@ def _list_audio_players(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for player in ("A", "B"):
         entry = defaults.get(player) or {}
-        source_id = entry.get("source_id")
-        source_name = entry.get("source_name")
+        service_id = entry.get("service_id")
+        service_name = entry.get("service_name")
         items.append(
             {
                 "player": f"Player {player}",
-                "source": _strip_player_prefix(str(source_name) if source_name else None) or "unset",
-                "source_id": source_id,
+                "service": _strip_player_prefix(str(service_name) if service_name else None) or "unset",
+                "service_id": service_id,
             }
         )
     return items
@@ -447,25 +451,25 @@ def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | N
         return
 
     if entity == "audio":
-        if items and "player" in items[0] and "source" in items[0] and "name" not in items[0]:
-            headers = ["Player", "Source", "Source ID"]
-            rows = [[row.get("player"), row.get("source"), row.get("source_id")] for row in items]
+        if items and "player" in items[0] and "service" in items[0] and "name" not in items[0]:
+            headers = ["Player", "Service", "Service ID"]
+            rows = [[row.get("player"), row.get("service"), row.get("service_id")] for row in items]
             print(f"Audio players ({len(items)})\n{render_table(headers, rows)}")
             return
 
-        if items and "source_id" in items[0] and "source_name" in items[0] and "player" in items[0]:
-            headers = ["Player", "Sources", "Source ID"]
-            rows = [[row.get("player"), row.get("source_name"), row.get("source_id")] for row in items]
-            print(f"Audio sources ({len(items)})\n{render_table(headers, rows)}")
+        if items and "service_id" in items[0] and "service_name" in items[0] and "player" in items[0]:
+            headers = ["Player", "Service", "Service ID"]
+            rows = [[row.get("player"), row.get("service_name"), row.get("service_id")] for row in items]
+            print(f"Audio services ({len(items)})\n{render_table(headers, rows)}")
             return
 
-        if items and "source_id" in items[0] and "source_name" in items[0] and "player" not in items[0]:
-            headers = ["Sources", "Source ID"]
-            rows = [[row.get("source_name"), row.get("source_id")] for row in items]
-            print(f"Audio sources ({len(items)})\n{render_table(headers, rows)}")
+        if items and "service_id" in items[0] and "service_name" in items[0] and "player" not in items[0]:
+            headers = ["Service", "Service ID"]
+            rows = [[row.get("service_name"), row.get("service_id")] for row in items]
+            print(f"Audio services ({len(items)})\n{render_table(headers, rows)}")
             return
 
-        headers = ["Name", "Speaker ID", "Power", "Mute", "Volume %", "Player", "Source"]
+        headers = ["Name", "Speaker ID", "Power", "Mute", "Volume %", "Player", "Service"]
         rows = [
             [
                 row.get("name"),
@@ -474,7 +478,7 @@ def _emit_query_table(entity: str, items: List[Dict[str, Any]], room_id: int | N
                 row.get("current_mute_state"),
                 row.get("current_volume_percent"),
                 row.get("player"),
-                row.get("source"),
+                row.get("service"),
             ]
             for row in items
         ]
@@ -536,25 +540,25 @@ def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | Non
         return
 
     if entity == "audio":
-        if items and "player" in items[0] and "source" in items[0] and "name" not in items[0]:
-            headers = ["Player", "Source", "Source ID"]
-            rows = [[row.get("player"), row.get("source"), row.get("source_id")] for row in items]
+        if items and "player" in items[0] and "service" in items[0] and "name" not in items[0]:
+            headers = ["Player", "Service", "Service ID"]
+            rows = [[row.get("player"), row.get("service"), row.get("service_id")] for row in items]
             print(render_csv(headers, rows))
             return
 
-        if items and "source_id" in items[0] and "source_name" in items[0] and "player" in items[0]:
-            headers = ["Player", "Sources", "Source ID"]
-            rows = [[row.get("player"), row.get("source_name"), row.get("source_id")] for row in items]
+        if items and "service_id" in items[0] and "service_name" in items[0] and "player" in items[0]:
+            headers = ["Player", "Service", "Service ID"]
+            rows = [[row.get("player"), row.get("service_name"), row.get("service_id")] for row in items]
             print(render_csv(headers, rows))
             return
 
-        if items and "source_id" in items[0] and "source_name" in items[0] and "player" not in items[0]:
-            headers = ["Sources", "Source ID"]
-            rows = [[row.get("source_name"), row.get("source_id")] for row in items]
+        if items and "service_id" in items[0] and "service_name" in items[0] and "player" not in items[0]:
+            headers = ["Service", "Service ID"]
+            rows = [[row.get("service_name"), row.get("service_id")] for row in items]
             print(render_csv(headers, rows))
             return
 
-        headers = ["Name", "Speaker ID", "Power", "Mute", "Volume %", "Player", "Source"]
+        headers = ["Name", "Speaker ID", "Power", "Mute", "Volume %", "Player", "Service"]
         rows = [
             [
                 row.get("name"),
@@ -563,7 +567,7 @@ def _emit_query_raw(entity: str, items: List[Dict[str, Any]], room_id: int | Non
                 row.get("current_mute_state"),
                 row.get("current_volume_percent"),
                 row.get("player"),
-                row.get("source"),
+                row.get("service"),
             ]
             for row in items
         ]
@@ -601,10 +605,10 @@ def _ordered_query_items(entity: str, items: List[Dict[str, Any]]) -> List[Dict[
     elif entity == "rooms":
         preferred = ["name", "id"]
     elif entity == "audio":
-        if items and "player" in items[0] and "source" in items[0]:
-            preferred = ["player", "source", "source_id"]
-        elif items and "source_id" in items[0] and "source_name" in items[0] and "player" not in items[0]:
-            preferred = ["source_name", "source_id"]
+        if items and "player" in items[0] and "service" in items[0]:
+            preferred = ["player", "service", "service_id"]
+        elif items and "service_id" in items[0] and "service_name" in items[0] and "player" not in items[0]:
+            preferred = ["service_name", "service_id"]
         else:
             preferred = [
                 "name",
@@ -613,6 +617,7 @@ def _ordered_query_items(entity: str, items: List[Dict[str, Any]]) -> List[Dict[
                 "current_mute_state",
                 "current_volume_percent",
                 "player",
+                "service",
                 "room_id",
                 "room_name",
             ]
@@ -684,7 +689,7 @@ def _query_command(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="crestron-cli query", add_help=True)
     parser.add_argument("token1", nargs="?", help="Entity or filter: lights|rooms|scenes|audio or room=<id|name>")
     parser.add_argument("token2", nargs="?", help="Optional second token in either order")
-    parser.add_argument("token3", nargs="?", help="Optional audio selector: player|source")
+    parser.add_argument("token3", nargs="?", help="Optional audio selector: player|service")
     parser.add_argument("--refresh", action="store_true", help="Force refresh before query")
     parser.add_argument("--raw", action="store_true", help="Emit comma-separated values (CSV)")
     parser.add_argument("--json", action="store_true", help="Emit structured JSON")
@@ -773,8 +778,8 @@ def _query_command(argv: List[str]) -> int:
         if entity == "audio":
             if audio_view == "player":
                 items = _list_audio_players(state)
-            elif audio_view == "source":
-                items = _collect_audio_sources(state, room_id=room_id)
+            elif audio_view == "service":
+                items = _collect_audio_services(state, room_id=room_id)
             else:
                 items = _list_audio_status(state, room_id=room_id)
             if fmt == "human":
@@ -1087,7 +1092,7 @@ def _audio_command(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="crestron-cli audio",
         add_help=True,
-        usage="crestron-cli audio <target> {on|off|set|mute|unmute|toggle|source|player} [value] [--player <A|B>] [--json|--yaml]\n       crestron-cli audio <A|B>=<source-id|source-name>",
+        usage="crestron-cli audio <target> {on|off|set|mute|unmute|toggle|service|player} [value] [--player <A|B>] [--json|--yaml]\n       crestron-cli audio <A|B>=<service-id|service-name>",
     )
     parser.add_argument("arg1")
     parser.add_argument("arg2", nargs="?")
@@ -1106,11 +1111,11 @@ def _audio_command(argv: List[str]) -> int:
     if "=" in args.arg1 and args.arg2 is None and args.arg3 is None:
         left, right = args.arg1.split("=", 1)
         player = left.strip().upper()
-        source_target = right.strip()
+        service_target = right.strip()
         if player not in {"A", "B"}:
-            return _emit_error("audio player assignment must use A=<source> or B=<source>", fmt=fmt)
-        if not source_target:
-            return _emit_error("audio player assignment requires a source id or name", fmt=fmt)
+            return _emit_error("audio player assignment must use A=<service> or B=<service>", fmt=fmt)
+        if not service_target:
+            return _emit_error("audio player assignment requires a service id or name", fmt=fmt)
 
         try:
             config = load_config()
@@ -1119,42 +1124,42 @@ def _audio_command(argv: List[str]) -> int:
             if not has_cached_inventory(state):
                 state = _refresh_inventory(client, state)
 
-            sources = _collect_audio_sources(state)
+            services = _collect_audio_services(state)
             selected: Dict[str, Any] | None = None
-            if source_target.isdigit():
-                wanted = int(source_target)
-                for source in sources:
-                    if int(source.get("source_id") or -1) == wanted:
-                        selected = source
+            if service_target.isdigit():
+                wanted = int(service_target)
+                for service in services:
+                    if int(service.get("service_id") or -1) == wanted:
+                        selected = service
                         break
             else:
-                wanted_name = source_target.strip().lower()
+                wanted_name = service_target.strip().lower()
                 # Prefer exact name match first, then fall back to partial contains match.
-                for source in sources:
-                    if str(source.get("source_name") or "").strip().lower() == wanted_name:
-                        selected = source
+                for service in services:
+                    if str(service.get("service_name") or "").strip().lower() == wanted_name:
+                        selected = service
                         break
                 if selected is None:
-                    for source in sources:
-                        source_name = str(source.get("source_name") or "").strip().lower()
-                        if wanted_name in source_name:
-                            selected = source
+                    for service in services:
+                        service_name = str(service.get("service_name") or "").strip().lower()
+                        if wanted_name in service_name:
+                            selected = service
                             break
 
             if selected is None:
-                return _emit_error("audio default update failed", fmt=fmt, details=f"unknown source '{source_target}'")
+                return _emit_error("audio default update failed", fmt=fmt, details=f"unknown service '{service_target}'")
 
-            state = _set_audio_default(state, player, int(selected.get("source_id")), str(selected.get("source_name")))
+            state = _set_audio_default(state, player, int(selected.get("service_id")), str(selected.get("service_name")))
             save_state(state)
 
             emit_payload(
                 {
                     "success": True,
-                    "message": f"Player {player} source set to {selected.get('source_name')}",
+                    "message": f"Player {player} service set to {selected.get('service_name')}",
                     "data": {
                         "player": player,
-                        "source_id": selected.get("source_id"),
-                        "source_name": selected.get("source_name"),
+                        "service_id": selected.get("service_id"),
+                        "service_name": selected.get("service_name"),
                     },
                 },
                 fmt,
@@ -1166,7 +1171,7 @@ def _audio_command(argv: List[str]) -> int:
             return _emit_error("audio default update failed", fmt=fmt, details=str(exc))
 
     # Mode 1b: legacy global assignment form, e.g. audio A "Spotify"
-    if args.arg1.lower() in {"a", "b"} and args.arg2 is not None and args.arg3 is None and args.arg2.lower() not in {"on", "off", "set", "mute", "unmute", "toggle", "source"}:
+    if args.arg1.lower() in {"a", "b"} and args.arg2 is not None and args.arg3 is None and args.arg2.lower() not in {"on", "off", "set", "mute", "unmute", "toggle", "service"}:
         forwarded = [f"{args.arg1.upper()}={args.arg2}"]
         if args.json:
             forwarded.append("--json")
@@ -1182,12 +1187,12 @@ def _audio_command(argv: List[str]) -> int:
         value = action.split("=", 1)[1].strip()
         action = "player"
 
-    if action not in {"on", "off", "set", "mute", "unmute", "toggle", "source"}:
+    if action not in {"on", "off", "set", "mute", "unmute", "toggle", "service"}:
         if action != "player":
             return _emit_error(
                 "audio action is required",
                 fmt=fmt,
-                details="use 'crestron-cli audio <target> on|off|set|mute|unmute|toggle|source|player' or 'crestron-cli audio A=<source>'",
+                details="use 'crestron-cli audio <target> on|off|set|mute|unmute|toggle|service|player' or 'crestron-cli audio A=<service>'",
             )
 
     player = args.player.upper() if args.player else None
@@ -1200,11 +1205,11 @@ def _audio_command(argv: List[str]) -> int:
             return _emit_error("player action requires A or B", fmt=fmt)
         player = requested_player
 
-    if action not in {"on", "off", "set", "mute", "unmute", "toggle", "source", "player"}:
+    if action not in {"on", "off", "set", "mute", "unmute", "toggle", "service", "player"}:
         return _emit_error(
             "audio action is required",
             fmt=fmt,
-            details="use 'crestron-cli audio <target> on|off|set|mute|unmute|toggle|source|player' or 'crestron-cli audio A=<source>'",
+            details="use 'crestron-cli audio <target> on|off|set|mute|unmute|toggle|service|player' or 'crestron-cli audio A=<service>'",
         )
 
     if action == "set":
@@ -1219,10 +1224,10 @@ def _audio_command(argv: List[str]) -> int:
     else:
         level_percent = None
 
-    if action == "source" and value is None:
-        return _emit_error("source action requires a source id or name", fmt=fmt)
+    if action == "service" and value is None:
+        return _emit_error("service action requires a service id or name", fmt=fmt)
 
-    if action not in {"set", "source", "player"} and value is not None:
+    if action not in {"set", "service", "player"} and value is not None:
         return _emit_error("unexpected value argument", fmt=fmt)
 
     try:
@@ -1251,7 +1256,7 @@ def _audio_command(argv: List[str]) -> int:
             defaults = _get_audio_defaults(state)
             default_entry = defaults.get(effective_player) or {}
             try:
-                preferred_source_id = int(default_entry.get("source_id")) if default_entry.get("source_id") is not None else None
+                preferred_source_id = int(default_entry.get("service_id")) if default_entry.get("service_id") is not None else None
             except Exception:
                 preferred_source_id = None
 
@@ -1304,7 +1309,7 @@ def _audio_command(argv: List[str]) -> int:
                 defaults = _get_audio_defaults(state)
                 default_entry = defaults.get(effective_player) or {}
                 try:
-                    preferred_source_id = int(default_entry.get("source_id")) if default_entry.get("source_id") is not None else None
+                    preferred_source_id = int(default_entry.get("service_id")) if default_entry.get("service_id") is not None else None
                 except Exception:
                     preferred_source_id = None
 
@@ -1334,7 +1339,7 @@ def _audio_command(argv: List[str]) -> int:
             defaults = _get_audio_defaults(state)
             default_entry = defaults.get(player) or {}
             try:
-                preferred_source_id = int(default_entry.get("source_id")) if default_entry.get("source_id") is not None else None
+                preferred_source_id = int(default_entry.get("service_id")) if default_entry.get("service_id") is not None else None
             except Exception:
                 preferred_source_id = None
 
@@ -1348,7 +1353,7 @@ def _audio_command(argv: List[str]) -> int:
             state = update_speaker_state(state, speaker_id, source_id=selected_source_id)
             action_desc = f"player set to {player}"
         else:
-            assert action == "source"
+            assert action == "service"
             selected_source_id, selected_source_name = resolve_speaker_source_target(
                 speaker,
                 value,
@@ -1358,7 +1363,7 @@ def _audio_command(argv: List[str]) -> int:
             state = update_speaker_state(state, speaker_id, source_id=selected_source_id)
             if player in {"A", "B"}:
                 state = _set_audio_default(state, player, selected_source_id, selected_source_name)
-            action_desc = f"source set to {selected_source_name or selected_source_id}"
+            action_desc = f"service set to {selected_source_name or selected_source_id}"
 
         observed_from_refresh = True
         try:
@@ -1422,9 +1427,9 @@ def _audio_command(argv: List[str]) -> int:
         if level_percent is not None:
             payload_data["level_percent"] = level_percent
         if selected_source_id is not None:
-            payload_data["source_id"] = selected_source_id
+            payload_data["service_id"] = selected_source_id
         if selected_source_name:
-            payload_data["source_name"] = selected_source_name
+            payload_data["service_name"] = selected_source_name
         if effective_player is not None:
             payload_data["player"] = effective_player
         if current_power_state is not None:
@@ -1435,8 +1440,8 @@ def _audio_command(argv: List[str]) -> int:
         if current_mute_state is not None:
             payload_data["current_mute_state"] = current_mute_state
         if current_source_id is not None:
-            payload_data["current_source_id"] = current_source_id
-            payload_data["current_source_name"] = current_source_name or "unknown"
+            payload_data["current_service_id"] = current_source_id
+            payload_data["current_service_name"] = current_source_name or "unknown"
             payload_data["current_player"] = current_player or "unknown"
         payload_data["observed_from_refresh"] = observed_from_refresh
 
@@ -1562,22 +1567,22 @@ def _print_target_help(kind: str, target: str | None = None) -> None:
                 [
                     "crestron-cli audio",
                     "",
-                    "Player source assignment:",
-                    "  crestron-cli audio A=<source-id|source-name|partial-name> [--json|--yaml]",
-                    "  crestron-cli audio B=<source-id|source-name|partial-name> [--json|--yaml]",
+                    "Player service assignment:",
+                    "  crestron-cli audio A=<service-id|service-name|partial-name> [--json|--yaml]",
+                    "  crestron-cli audio B=<service-id|service-name|partial-name> [--json|--yaml]",
                     "",
                     "Room routing/control:",
                     "  crestron-cli audio=<id|name> [on|off|toggle] [level=<0..100>] [mute|unmute] [player=<A|B>] [--json|--yaml]",
                     "",
                     "Discovery:",
-                    "  crestron-cli query audio source",
+                    "  crestron-cli query audio service",
                     "  crestron-cli query audio player",
                     "",
                     "Notes:",
                     "  - Name matching is case-insensitive",
                     "  - Partial matching is supported",
-                    "  - Matches are player-scoped and use the same dataset as 'query audio source'",
-                    "  - Ambiguous source matches return an error; use source-id for deterministic control",
+                    "  - Matches are player-scoped and use the same dataset as 'query audio service'",
+                    "  - Ambiguous service matches return an error; use service-id for deterministic control",
                 ]
             )
         )
@@ -1709,15 +1714,15 @@ def _handle_audio_global_assignment(argv: List[str]) -> int:
     if parse_error:
         return _emit_error(parse_error)
     if len(tokens) != 1 or "=" not in tokens[0]:
-        return _emit_error("audio player assignment must use A=<source> or B=<source>", fmt=fmt)
+        return _emit_error("audio player assignment must use A=<service> or B=<service>", fmt=fmt)
 
     left, right = tokens[0].split("=", 1)
     player = left.strip().upper()
-    source_target = right.strip()
+    service_target = right.strip()
     if player not in {"A", "B"}:
-        return _emit_error("audio player assignment must use A=<source> or B=<source>", fmt=fmt)
-    if not source_target:
-        return _emit_error("audio player assignment requires a source id or name", fmt=fmt)
+        return _emit_error("audio player assignment must use A=<service> or B=<service>", fmt=fmt)
+    if not service_target:
+        return _emit_error("audio player assignment requires a service id or name", fmt=fmt)
 
     try:
         config = load_config()
@@ -1726,68 +1731,68 @@ def _handle_audio_global_assignment(argv: List[str]) -> int:
         if not has_cached_inventory(state):
             state = _refresh_inventory(client, state)
 
-        # Resolve from the same source dataset exposed by `query audio source`.
-        all_sources = _collect_audio_sources(state)
-        sources = [
-            source
-            for source in all_sources
-            if str(source.get("player") or "").strip().lower() == f"player {player}".lower()
+        # Resolve from the same service dataset exposed by `query audio service`.
+        all_services = _collect_audio_services(state)
+        services = [
+            service
+            for service in all_services
+            if str(service.get("player") or "").strip().lower() == f"player {player}".lower()
         ]
         selected: Dict[str, Any] | None = None
-        if source_target.isdigit():
-            wanted = int(source_target)
-            for source in sources:
-                if int(source.get("source_id") or -1) == wanted:
-                    selected = source
+        if service_target.isdigit():
+            wanted = int(service_target)
+            for service in services:
+                if int(service.get("service_id") or -1) == wanted:
+                    selected = service
                     break
         else:
-            wanted_name = source_target.strip().lower()
+            wanted_name = service_target.strip().lower()
             exact_matches = [
-                source
-                for source in sources
-                if str(source.get("source_name") or "").strip().lower() == wanted_name
+                service
+                for service in services
+                if str(service.get("service_name") or "").strip().lower() == wanted_name
             ]
             if len(exact_matches) == 1:
                 selected = exact_matches[0]
             elif len(exact_matches) > 1:
-                ids = ", ".join(str(match.get("source_id")) for match in exact_matches)
+                ids = ", ".join(str(match.get("service_id")) for match in exact_matches)
                 return _emit_error(
                     "audio player assignment failed",
                     fmt=fmt,
-                    details=f"ambiguous source name '{source_target}' for Player {player}; use source id ({ids})",
+                    details=f"ambiguous service name '{service_target}' for Player {player}; use service id ({ids})",
                 )
 
             if selected is None:
                 partial_matches = [
-                    source
-                    for source in sources
-                    if wanted_name in str(source.get("source_name") or "").strip().lower()
+                    service
+                    for service in services
+                    if wanted_name in str(service.get("service_name") or "").strip().lower()
                 ]
                 if len(partial_matches) == 1:
                     selected = partial_matches[0]
                 elif len(partial_matches) > 1:
-                    ids = ", ".join(str(match.get("source_id")) for match in partial_matches)
+                    ids = ", ".join(str(match.get("service_id")) for match in partial_matches)
                     return _emit_error(
                         "audio player assignment failed",
                         fmt=fmt,
-                        details=f"ambiguous source match '{source_target}' for Player {player}; use source id ({ids})",
+                        details=f"ambiguous service match '{service_target}' for Player {player}; use service id ({ids})",
                     )
 
         if selected is None:
-            return _emit_error("audio player assignment failed", fmt=fmt, details=f"unknown source '{source_target}'")
+            return _emit_error("audio player assignment failed", fmt=fmt, details=f"unknown service '{service_target}'")
 
-        state = _set_audio_default(state, player, int(selected.get("source_id")), str(selected.get("source_name")))
+        state = _set_audio_default(state, player, int(selected.get("service_id")), str(selected.get("service_name")))
         save_state(state)
 
         emit_payload(
             {
                 "success": True,
-                "message": f"Player {player} source set",
+                "message": f"Player {player} service set",
                 "data": {
                     "object": "audio-player",
                     "player": player,
-                    "source_id": selected.get("source_id"),
-                    "source_name": selected.get("source_name"),
+                    "service_id": selected.get("service_id"),
+                    "service_name": selected.get("service_name"),
                 },
             },
             fmt,
@@ -1890,7 +1895,7 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
             defaults = _get_audio_defaults(state)
             default_entry = defaults.get(effective_player) or {}
             try:
-                preferred_source_id = int(default_entry.get("source_id")) if default_entry.get("source_id") is not None else None
+                preferred_source_id = int(default_entry.get("service_id")) if default_entry.get("service_id") is not None else None
             except Exception:
                 preferred_source_id = None
 
@@ -2018,7 +2023,7 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
                 current_player = _infer_player_from_source_name(current_source_name)
                 break
 
-        # Learn room-specific source IDs per player so subsequent routes reuse
+        # Learn room-specific service IDs per player so subsequent routes reuse
         # the channel that actually works for this room/amp path.
         room_id_for_preset = current.get("room_id") or speaker.get("room_id")
         if current_source_id is not None and current_player in {"A", "B"} and room_id_for_preset is not None:
@@ -2040,8 +2045,8 @@ def _handle_audio_target(target: str, argv: List[str]) -> int:
                     "level_percent": reported_level_percent,
                     "mute": str(current.get("current_mute_state") or "unknown"),
                     "player": current_player,
-                    "source_id": current_source_id,
-                    "source_name": _strip_player_prefix(current_source_name) if current_source_name else None,
+                    "service_id": current_source_id,
+                    "service_name": _strip_player_prefix(current_source_name) if current_source_name else None,
                     "observed_from_refresh": observed_from_refresh,
                 },
             },
@@ -2164,15 +2169,15 @@ def _print_root_help() -> None:
             "",
             "Usage:",
             "  crestron-cli initialize [--force] [--verbose] [--json|--yaml]",
-            "  crestron-cli query [lights|scenes|audio] [room=<id|name>] [player|source] [--refresh] [--raw|--json|--yaml]",
-            "  crestron-cli query room=<id|name> [lights|scenes|audio] [player|source] [--refresh] [--raw|--json|--yaml]",
+            "  crestron-cli query [lights|scenes|audio] [room=<id|name>] [player|service] [--refresh] [--raw|--json|--yaml]",
+            "  crestron-cli query room=<id|name> [lights|scenes|audio] [player|service] [--refresh] [--raw|--json|--yaml]",
             "  crestron-cli query rooms [--refresh] [--raw|--json|--yaml]",
-            "  crestron-cli query audio [room=<id|name>|player|source] [--refresh] [--raw|--json|--yaml]",
+            "  crestron-cli query audio [room=<id|name>|player|service] [--refresh] [--raw|--json|--yaml]",
             "  crestron-cli light=<id|name> on|off|toggle|level=<0..100> [--json|--yaml]",
             "  crestron-cli audio=<id|name> [on|off|toggle] [level=<0..100>] [mute|unmute] [player=<A|B>] [--json|--yaml]",
             "  crestron-cli scene=<id|name> on|activate [--type <lighting|media>] [--room-id <id>] [--json|--yaml]",
-            "  crestron-cli audio A=<source-id|source-name|partial-name> [--json|--yaml]",
-            "  crestron-cli audio B=<source-id|source-name|partial-name> [--json|--yaml]",
+            "  crestron-cli audio A=<service-id|service-name|partial-name> [--json|--yaml]",
+            "  crestron-cli audio B=<service-id|service-name|partial-name> [--json|--yaml]",
             "",
             "Environment:",
             "  CRESTRON_HOME_IP (required)",
