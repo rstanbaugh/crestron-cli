@@ -52,30 +52,50 @@ Structured response shape (stable contract):
 - audio player assignment (`audio A=<source>`): `success`, `message`, `data.object`, `data.player`, `data.source_id`, `data.source_name`
 - errors: `success: false`, `error`, optional `details`
 
-## Runtime model
+## Package assumptions
 
-- Primary runtime: conda env `openclaw`
-- Primary entrypoint: `~/bin/crestron-cli` (thin shell wrapper)
-- Core program: `~/.openclaw/tools/crestron/crestron-cli.py`
+- Package name: `crestron-cli`
+- Version: `0.1.0`
+- Python: `>=3.9`
+- Runtime dependencies:
+	- `requests>=2.31.0`
+	- `PyYAML>=6.0.1`
+- Test dependency (optional): `pytest>=9`
 
-The wrapper should only load env vars and dispatch to Python.
+## Installation
 
-## Dependencies (conda)
-
-Install in `openclaw`:
+Use any Python environment manager you prefer (venv, conda, pipx, system Python).
 
 ```bash
-conda install -n openclaw -y requests pyyaml
+python -m pip install -U pip
+python -m pip install .
+```
+
+Verify:
+
+```bash
+python -m crestron_cli --help
+crestron-cli --help
+```
+
+## Validation
+
+```bash
+python -m pip install pytest
+python -m pytest -q
 ```
 
 ## Environment variables
 
-Defined in `~/.openclaw/.env`:
+Set in your shell or environment manager:
 
 - `CRESTRON_HOME_IP` (required)
 - `CRESTRON_AUTH_TOKEN` (required)
 - `CRESTRON_TIMEOUT_S` (optional, default `10`)
-- `OPENCLAW_PY` (optional; defaults to `python3` in wrapper)
+
+Optional integration variable:
+
+- `OPENCLAW_PY` (optional; when set, default output mode is YAML)
 
 Example:
 
@@ -83,16 +103,19 @@ Example:
 CRESTRON_HOME_IP=YOUR_CONTROLLER_IP
 CRESTRON_AUTH_TOKEN=YOUR_BASE_TOKEN
 CRESTRON_TIMEOUT_S=10
-OPENCLAW_PY=/opt/homebrew/Caskroom/miniforge/base/envs/openclaw/bin/python
+OPENCLAW_PY=/path/to/python
 ```
 
-## `~/bin/crestron-cli` wrapper
+## Optional local wrapper example
+
+Only needed if you want a custom shell wrapper. Package installs already provide
+the `crestron-cli` console script.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE="$HOME/.openclaw/.env"
+ENV_FILE="$HOME/.config/crestron-cli/.env"
 if [[ -f "$ENV_FILE" ]]; then
 	set -a
 	# shellcheck disable=SC1090
@@ -101,9 +124,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 PY="${OPENCLAW_PY:-python3}"
-TOOL="$HOME/.openclaw/tools/crestron/crestron-cli.py"
-
-exec "$PY" "$TOOL" "$@"
+exec "$PY" -m crestron_cli "$@"
 ```
 
 ## Commands
@@ -172,6 +193,8 @@ State file:
 ```text
 ~/.openclaw/tools/crestron/state.yaml
 ```
+
+Note: the current implementation stores cache state at this fixed path.
 
 Behavior:
 - `initialize` always refreshes and rebuilds state maps
