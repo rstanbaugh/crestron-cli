@@ -1,115 +1,133 @@
+---
+policy:
+  purpose: "Reusable agent behavior guidance for Python CLI projects"
+  scope: "General rules only; keep project/domain-specific behavior in design/requirements/spec docs"
+
+defaults:
+  language: python
+  cli_framework: argparse
+  package_entrypoint_pattern: "<package>.main:cli"
+  runtime_dependencies: project_defined
+  environment: dedicated_conda
+
+core_philosophy:
+  - simplicity_first
+  - clarity_and_consistency_over_cleverness
+  - optimize_for_humans_and_automation_agents
+  - explicit_over_implicit
+
+non_negotiables:
+  - use_project_conda_env_for_install_run_test
+  - install_packages_only_in_project_environment
+  - never_install_into_system_or_conda_base_without_explicit_user_approval
+  - do_not_assume_backward_compatibility
+  - confirm_breaking_change_policy_first
+  - never_commit_secrets_or_credential_files
+  - keep_runtime_and_cache_artifacts_untracked_unless_required
+
+interaction_rules:
+  - ask_clarifying_questions_when_instructions_are_ambiguous
+  - share_short_plan_for_non_trivial_changes
+  - summarize_what_changed_after_user_feedback
+  - state_tradeoffs_explicitly
+  - confirm_direction_when_multiple_reasonable_options_exist
+
+testing_and_design:
+  runner: pytest
+  rules:
+    - test_conditions_are_part_of_design
+    - add_or_update_tests_for_new_functionality
+    - add_regression_test_for_bug_fixes
+    - update_tests_with_code_and_docs_when_behavior_changes
+    - prefer_small_focused_tests
+    - keep_tests_deterministic
+
+core_design_rules:
+  default_output: human_readable_table_when_appropriate
+  flags_on_relevant_commands:
+    - --json
+    - --yaml
+    - --raw
+    - --refresh
+  terminology: consistent_across_commands_help_and_output_contracts
+
+help_behavior:
+  supports:
+    - -h
+    - --help
+    - help
+  command_level:
+    - "command -h"
+    - "command --help"
+    - missing_required_arguments_shows_command_help
+  subcommand_level:
+    - "command subcommand -h"
+    - "command subcommand --help"
+    - "command subcommand help"
+  requirements:
+    - document_supported_forms
+    - cover_supported_forms_with_tests
+
+configuration_precedence:
+  - cli_flags
+  - environment_variables
+  - dotenv_file
+  - defaults
+
+structured_output_contract:
+  stable_fields:
+    success: boolean
+    message: human_readable_success_message
+    error: short_error_description_when_success_false
+    details: optional_structured_context
+    data: primary_payload
+  rules:
+    - treat_structured_output_as_api_contract
+    - avoid_silent_contract_changes
+    - update_docs_and_tests_with_contract_changes
+
+documentation_sync:
+  - keep_project_specific_rules_in_project_docs
+  - update_docs_in_same_change_set_when_behavior_or_contract_changes
+
+security_and_repo_hygiene:
+  - sanitize_exported_tooling_artifacts_before_commit
+  - if_history_contains_secrets_rewrite_and_force_push_before_public_release
+
+idempotency:
+  - commands_should_be_safe_to_rerun_when_possible
+  - side_effects_must_be_explicit_in_help_text
+
+logging:
+  stdout: primary_command_output
+  stderr: errors_and_diagnostics
+  structured_output:
+    modes:
+      - --json
+      - --yaml
+      - --raw
+    rules:
+      - stdout_only
+      - no_mixed_human_text
+
+exit_codes:
+  note: recommended_unix_style_for_new_projects_or_when_touching_error_handling
+  map:
+    0: success
+    1: general_error
+    2: invalid_arguments_or_usage
+  custom_codes: avoid_unless_explicitly_documented
+
+change_safety_checklist:
+  - run_syntax_checks_and_pytest_in_project_environment
+  - run_at_least_one_cli_smoke_check_for_changed_command_paths
+  - confirm_new_or_changed_functionality_has_test_coverage
+  - confirm_help_text_reflects_actual_grammar
+  - confirm_docs_and_tests_are_aligned
+  - confirm_git_status_has_no_sensitive_artifacts
+---
+
 # AGENTS.md
 
-## Purpose
-Reusable agent behavior guidance for Python CLI projects.
-Keep this file general; put project-specific command/domain rules in project docs.
-
-## Defaults
-- Language: Python
-- CLI framework: `argparse` (not Click)
-- Package entrypoint pattern: `<package>.main:cli`
-- Runtime dependencies are project-defined
-- Project uses a dedicated conda environment
-
-## Core Philosophy
-- Simplicity first: maximize impact with minimal code.
-- Clarity and consistency over cleverness.
-- Build tools that are excellent for both humans and automation agents.
-- Prefer explicit behavior over implicit behavior.
-
-## Non-Negotiables
-- Use the project conda environment for install/run/test.
-- Install packages only into the project environment.
-- Never install packages into system Python or conda `base` without explicit user approval.
-- Do not assume backward compatibility by default.
-- For potentially breaking changes, confirm policy first: strict cutover or compatibility window.
-- Never commit secrets, live tokens, cookies, or credential-bearing env files.
-- Keep runtime/cache artifacts untracked unless explicitly required.
-
-## Interaction Rules
-- Ask clarifying questions before implementation when instructions are ambiguous.
-- For non-trivial changes, share a short plan first.
-- After user feedback/corrections, summarize what changed and why.
-- State trade-offs explicitly when recommending options.
-- Never assume when multiple reasonable approaches exist; confirm direction.
-
-## Test and Design Process
-- Use `pytest` as the default test runner.
-- Treat test conditions as part of design, not only post-implementation validation.
-- For new functionality, add/update pytest cases defining expected behavior.
-- For bug fixes, add a regression test that fails before the fix and passes after the fix.
-- When behavior/contracts change, update tests in the same change set as code and docs.
-- Prefer small, focused tests that clearly state one behavior per test.
-- Keep tests deterministic; avoid live external dependencies for unit tests.
-
-## Core Design Rules
-- Default output should be clean, human-readable (table when appropriate).
-- On relevant commands, support these flags consistently:
-  - `--json`
-  - `--yaml`
-  - `--raw`
-  - `--refresh` (when state/cache is involved)
-  - Use consistent terminology across commands, help, and output contracts.
-
-## Help Behavior
-- Support standard flags: `-h` and `--help` (argparse default)
-- Optionally support `help` as a subcommand for larger CLIs
-- Command-level help:
-  - `command -h`
-  - `command --help`
-  - missing required arguments
-- Subcommand-level help:
-  - `command subcommand -h`
-  - `command subcommand --help`
-  - If implemented: `command help subcommand`
-- Document all supported help forms and cover them with tests
-
-## Configuration Precedence
-1. CLI flags
-2. Environment variables
-3. `.env` file
-4. Defaults
-
-## Structured Output Contract
-- Maintain stable top-level fields with explicit semantics:
-  - `success`: boolean
-  - `message`: human-readable success message
-  - `error`: short error description (when `success=false`)
-  - `details`: optional structured context
-  - `data`: primary payload
-- Treat structured outputs as API contracts for both humans and agents.
-- Avoid silent contract changes; update docs and tests in the same change set.
-
-## Documentation Sync Rules
-- Put project/domain-specific command rules in project docs (design/requirements/spec files).
-- When behavior or contracts change, update the relevant docs in the same change set.
-
-## Security and Repo Hygiene
-- Sanitize exported tooling artifacts before commit.
-- If history contains secrets, treat history rewrite and force-push as required before public release.
-
-## Idempotency
-- Commands should be safe to re-run when possible.
-- Side effects must be explicit in help text.
-
-## Logging
-- Primary command output goes to stdout
-- Errors and diagnostics go to stderr
-- Structured outputs (`--json`, `--yaml`, `--raw`) must be stdout-only
-- Do not mix structured output with human-readable text
-
-## Exit Codes
-Recommended Unix-style convention (adopt for new projects and when touching CLI error handling):
-- 0: success
-- 1: general error
-- 2: invalid arguments or usage
-- Avoid custom exit codes unless explicitly documented.
-
-## Change Safety Checklist
-Before finishing substantial changes:
-1. Run syntax checks and `pytest` in the project environment.
-2. Run at least one CLI smoke check for changed command paths.
-3. Confirm new/changed functionality has corresponding test coverage.
-4. Confirm help text reflects actual grammar.
-5. Confirm docs and tests are aligned.
-6. Confirm git status does not include sensitive artifacts.
+This file uses YAML policy metadata for machine readability.
+Keep project/domain-specific behavior in design/requirements/spec documents.
