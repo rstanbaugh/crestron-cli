@@ -49,14 +49,34 @@ Keep this file general; put project-specific command/domain rules in project doc
   - `--yaml`
   - `--raw`
   - `--refresh` (when state/cache is involved)
-- Help behavior should follow Unix conventions:
-  - `command --help` for general help
-  - `command subcommand --help` for specific help
-- Use consistent terminology across commands, help, and output contracts.
-- Prefer environment variables for configuration; support `.env` loading where appropriate.
+  - Use consistent terminology across commands, help, and output contracts.
+
+## Help Behavior
+- Support standard flags: `-h` and `--help` (argparse default)
+- Optionally support `help` as a subcommand for larger CLIs
+- Command-level help:
+  - `command -h`
+  - `command --help`
+  - missing required arguments
+- Subcommand-level help:
+  - `command subcommand -h`
+  - `command subcommand --help`
+  - If implemented: `command help subcommand`
+- Document all supported help forms and cover them with tests
+
+## Configuration Precedence
+1. CLI flags
+2. Environment variables
+3. `.env` file
+4. Defaults
 
 ## Structured Output Contract
-- Maintain stable top-level fields: `success`, `message`/`error`, `details`, `data`.
+- Maintain stable top-level fields with explicit semantics:
+  - `success`: boolean
+  - `message`: human-readable success message
+  - `error`: short error description (when `success=false`)
+  - `details`: optional structured context
+  - `data`: primary payload
 - Treat structured outputs as API contracts for both humans and agents.
 - Avoid silent contract changes; update docs and tests in the same change set.
 
@@ -68,10 +88,15 @@ Keep this file general; put project-specific command/domain rules in project doc
 - Sanitize exported tooling artifacts before commit.
 - If history contains secrets, treat history rewrite and force-push as required before public release.
 
+## Idempotency
+- Commands should be safe to re-run when possible.
+- Side effects must be explicit in help text.
+
 ## Logging
-- Human-readable output goes to stdout.
-- Errors and diagnostics go to stderr.
-- Structured outputs (`--json`, `--yaml`, `--raw`) must be stdout-only.
+- Primary command output goes to stdout
+- Errors and diagnostics go to stderr
+- Structured outputs (`--json`, `--yaml`, `--raw`) must be stdout-only
+- Do not mix structured output with human-readable text
 
 ## Exit Codes
 Recommended Unix-style convention (adopt for new projects and when touching CLI error handling):
