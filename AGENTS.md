@@ -51,6 +51,9 @@ core_design_rules:
     - --refresh
   terminology: consistent_across_commands_help_and_output_contracts
 
+  # CLI Entrypoint Rule
+  - always provide a top-level script (e.g., toolname.py) as the entrypoint for CLI tools, which imports and runs the main function from the package/module. Do not require users to set or modify PYTHONPATH. Avoid python -m for user-facing CLI wrappers; match the pattern used in crestron-cli and tempest-cli.
+
 help_behavior:
   supports:
     - -h
